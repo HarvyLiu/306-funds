@@ -37,6 +37,17 @@ export interface LedgerState {
   transactions: Transaction[];
 }
 
+export interface MutationPreview {
+  kind: 'add' | 'edit' | 'delete';
+  nextTransactions: Transaction[];
+  resultingBalance: number;
+  createsNegativeBalance: boolean;
+  changedFields: Array<keyof Transaction>;
+  target: Transaction;
+}
+
+export type OptionGroup = 'semesters' | 'categories' | 'officers';
+
 export interface LedgerFilter {
   semester: string | null;
   category: string | null;
