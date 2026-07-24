@@ -6,6 +6,8 @@ import type {
   Transaction,
 } from './types.js';
 
+export type {LedgerFilter} from './types.js';
+
 export const emptyFilter: Readonly<LedgerFilter> = Object.freeze({
   semester: null,
   category: null,

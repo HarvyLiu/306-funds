@@ -5,7 +5,25 @@ import {
   type Transaction,
 } from '@class-fund/ledger';
 import {render, screen, within} from '@testing-library/react';
-import {describe, expect, it} from 'vitest';
+import userEvent from '@testing-library/user-event';
+import {describe, expect, it, vi} from 'vitest';
+
+vi.mock('chart.js', () => {
+  class Chart {
+    static register() {}
+
+    destroy() {}
+  }
+
+  return {
+    BarController: 'BarController',
+    BarElement: 'BarElement',
+    CategoryScale: 'CategoryScale',
+    Chart,
+    LinearScale: 'LinearScale',
+    Tooltip: 'Tooltip',
+  };
+});
 
 import {ReportApp} from '../src/components/ReportApp.js';
 import type {ReportPayload} from '../src/lib/load-report.js';
@@ -15,7 +33,10 @@ const settings: LedgerSettings = {
   currency: 'TWD',
   active_semester: '第一學期',
   default_officer: '我',
-  semesters: [{value: '第一學期', status: 'active'}],
+  semesters: [
+    {value: '第一學期', status: 'active'},
+    {value: '第二學期', status: 'active'},
+  ],
   categories: [
     {value: '期初餘額', status: 'active'},
     {value: '教材與影印', status: 'active'},
@@ -44,12 +65,12 @@ const transactions: Transaction[] = [
     id: 'cleaning',
     date: '2026-08-20',
     semester: '第一學期',
-    subject: '掃具',
+    subject: '教室清潔用品',
     category: '清潔用品',
     type: 'expense',
     amount: 700,
     handled_by: '另一位總務',
-    note: '教室清潔',
+    note: '掃具與抹布',
     created_at: '2026-08-20T08:00:00+08:00',
   },
   {
@@ -115,7 +136,7 @@ describe('ReportApp', () => {
     expect(within(printingRow!).getByText('NT$300')).toBeVisible();
     expect(within(printingRow!).getByText('NT$4,000')).toBeVisible();
 
-    const cleaningRow = screen.getByText('掃具').closest('tr');
+    const cleaningRow = screen.getByText('教室清潔用品').closest('tr');
     expect(cleaningRow).not.toBeNull();
     expect(within(cleaningRow!).getByText('NT$700')).toBeVisible();
     expect(within(cleaningRow!).getByText('NT$4,300')).toBeVisible();
@@ -124,6 +145,71 @@ describe('ReportApp', () => {
       .getAllByRole('row')
       .slice(1)
       .map((row) => row.querySelector('.subject')?.textContent);
-    expect(subjects).toEqual(['影印講義', '掃具', '期初班費']);
+    expect(subjects).toEqual(['影印講義', '教室清潔用品', '期初班費']);
+  });
+
+  it('filters the report while preserving the full-ledger balance', async () => {
+    const user = userEvent.setup();
+    render(<ReportApp payload={payload} />);
+
+    await user.selectOptions(screen.getByLabelText('學期'), '第一學期');
+    await user.selectOptions(screen.getByLabelText('經手人'), '我');
+    await user.selectOptions(screen.getByLabelText('分類'), '教材與影印');
+    await user.selectOptions(screen.getByLabelText('類型'), 'expense');
+
+    const filteredSummary = screen.getByRole('region', {name: '篩選結果'});
+    expect(within(filteredSummary).getByText('篩選淨額')).toBeVisible();
+    expect(within(filteredSummary).getByText('-NT$300')).toBeVisible();
+
+    const overallSummary = screen.getByRole('region', {name: '帳務摘要'});
+    expect(within(overallSummary).getByText('目前總餘額')).toBeVisible();
+    expect(within(overallSummary).getByText('NT$4,000')).toBeVisible();
+
+    const table = screen.getByRole('table', {name: '班費交易明細'});
+    expect(within(table).getByText('影印講義')).toBeVisible();
+    expect(within(table).queryByText('教室清潔用品')).not.toBeInTheDocument();
+    const chartTotals = screen.getByRole('list', {name: '各分類支出金額'});
+    expect(within(chartTotals).getByText('教材與影印')).toBeVisible();
+    expect(within(chartTotals).getByText('NT$300')).toBeVisible();
+    expect(within(chartTotals).queryByText('清潔用品')).not.toBeInTheDocument();
+  });
+
+  it('searches notes, clears all controls, and reverses date order without changing balances', async () => {
+    const user = userEvent.setup();
+    render(<ReportApp payload={payload} />);
+
+    const search = screen.getByRole('searchbox', {name: '搜尋項目與備註'});
+    await user.type(search, '掃具');
+
+    const table = screen.getByRole('table', {name: '班費交易明細'});
+    expect(within(table).getByText('教室清潔用品')).toBeVisible();
+    expect(within(table).queryByText('影印講義')).not.toBeInTheDocument();
+
+    await user.clear(search);
+    await user.selectOptions(screen.getByLabelText('學期'), '第一學期');
+    await user.selectOptions(screen.getByLabelText('經手人'), '我');
+    await user.selectOptions(screen.getByLabelText('分類'), '教材與影印');
+    await user.selectOptions(screen.getByLabelText('類型'), 'expense');
+
+    await user.selectOptions(screen.getByLabelText('學期'), '');
+    await user.selectOptions(screen.getByLabelText('經手人'), '');
+    await user.selectOptions(screen.getByLabelText('分類'), '');
+    await user.selectOptions(screen.getByLabelText('類型'), '');
+    expect(within(table).getAllByRole('row')).toHaveLength(4);
+    expect(screen.queryByRole('region', {name: '篩選結果'})).not.toBeInTheDocument();
+
+    await user.selectOptions(screen.getByLabelText('日期排序'), 'oldest');
+    const subjects = within(table)
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) => row.querySelector('.subject')?.textContent);
+    expect(subjects).toEqual(['期初班費', '教室清潔用品', '影印講義']);
+
+    const openingRow = screen.getByText('期初班費').closest('tr');
+    const cleaningRow = screen.getByText('教室清潔用品').closest('tr');
+    const printingRow = screen.getByText('影印講義').closest('tr');
+    expect(within(openingRow!).getAllByText('NT$5,000')).toHaveLength(2);
+    expect(within(cleaningRow!).getByText('NT$4,300')).toBeVisible();
+    expect(within(printingRow!).getByText('NT$4,000')).toBeVisible();
   });
 });
