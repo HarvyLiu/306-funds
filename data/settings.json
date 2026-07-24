@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "currency": "TWD",
+  "active_semester": "第一學期",
+  "default_officer": "我",
+  "semesters": [
+    {"name": "第一學期", "active": true},
+    {"name": "第二學期", "active": true}
+  ],
+  "officers": [
+    {"name": "我", "active": true},
+    {"name": "另一位總務", "active": true}
+  ],
+  "categories": [
+    {"name": "期初餘額", "active": true},
+    {"name": "班費收入", "active": true},
+    {"name": "教材與影印", "active": true},
+    {"name": "活動", "active": true},
+    {"name": "清潔用品", "active": true},
+    {"name": "文具", "active": true},
+    {"name": "退款", "active": true},
+    {"name": "其他", "active": true}
+  ]
+}

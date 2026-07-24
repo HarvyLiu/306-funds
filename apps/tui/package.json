@@ -1,0 +1,32 @@
+{
+  "name": "@class-fund/tui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "class-fund-ledger": "./dist/main.js"
+  },
+  "scripts": {
+    "dev": "tsx src/main.tsx",
+    "build": "tsup src/main.tsx --format esm --dts --clean",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@class-fund/ledger": "*",
+    "cli-truncate": "^6.1.1",
+    "ink": "^7.1.1",
+    "ink-select-input": "^6.2.0",
+    "ink-text-input": "^6.0.0",
+    "react": "^19.2.8"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "ink-testing-library": "^4.0.0",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.1",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}

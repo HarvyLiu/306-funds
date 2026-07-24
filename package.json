@@ -1,0 +1,26 @@
+{
+  "name": "class-fund-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e -w @class-fund/web",
+    "validate:data": "tsx scripts/validate-data.ts",
+    "ledger": "npm run dev -w @class-fund/tui",
+    "dev:web": "npm run dev -w @class-fund/web"
+  },
+  "devDependencies": {
+    "tsx": "latest",
+    "typescript": "6.0.3"
+  }
+}
