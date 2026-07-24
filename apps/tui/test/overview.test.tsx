@@ -356,6 +356,7 @@ describe('recovery placeholder', () => {
 
     expect(lastFrame()).toContain('班費帳本');
     expect(lastFrame()).toContain('只能讀取');
-    expect(lastFrame()).toContain('設定 / json：Malformed JSON');
+    expect(lastFrame()).toContain('設定 / json：JSON 格式錯誤');
+    expect(lastFrame()).not.toContain('Malformed JSON');
   });
 });

@@ -413,21 +413,29 @@ describe('App transaction mutations', () => {
 
   it('renders typed issues by source, row, field, and message without raw values', async () => {
     const fake = fakeRepository([transaction]);
-    const privateValue = 'private-student-value';
+    const privateUuid = 'PRIVATE-STUDENT-UUID';
+    const privateAmount = 'private-student-amount';
     fake.saveTransactions.mockRejectedValueOnce(
       new LedgerValidationError([
         {
           source: 'transactions',
           row: 2,
+          field: 'id',
+          value: privateUuid,
+          message: 'ID must be a lowercase UUID',
+        },
+        {
+          source: 'transactions',
+          row: 3,
           field: 'amount',
-          value: privateValue,
-          message: '金額無效',
+          value: privateAmount,
+          message: 'Amount must be a positive whole number',
         },
         {
           source: 'settings',
-          field: 'active_semester',
-          value: privateValue,
-          message: '學期無效',
+          field: 'json',
+          value: '{private settings',
+          message: 'Malformed JSON',
         },
       ]),
     );
@@ -443,9 +451,17 @@ describe('App transaction mutations', () => {
     stdin.write('d');
     await nextRender();
     stdin.write('y');
-    await vi.waitFor(() => expect(lastFrame()).toContain('交易 / 第 2 列 / amount：金額無效'));
-    expect(lastFrame()).toContain('設定 / active_semester：學期無效');
-    expect(lastFrame()).not.toContain(privateValue);
+    await vi.waitFor(() =>
+      expect(lastFrame()).toContain('交易 / 第 2 列 / id：ID 必須是小寫 UUID'),
+    );
+    expect(lastFrame()).toContain('交易 / 第 3 列 / amount：金額必須是正整數');
+    expect(lastFrame()).toContain('設定 / json：JSON 格式錯誤');
+    expect(lastFrame()).not.toContain(privateUuid);
+    expect(lastFrame()).not.toContain(privateAmount);
+    expect(lastFrame()).not.toContain('{private settings');
+    expect(lastFrame()).not.toContain('ID must be a lowercase UUID');
+    expect(lastFrame()).not.toContain('Amount must be a positive whole number');
+    expect(lastFrame()).not.toContain('Malformed JSON');
     expect(lastFrame()).not.toContain('Ledger data validation failed');
   });
 });

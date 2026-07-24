@@ -330,7 +330,8 @@ describe('inspection and validation', () => {
   });
 
   test('returns owned inspection and backup state', async () => {
-    const root = await createRoot();
+    const backupTransaction = {...openingTransaction, amount: 5000};
+    const root = await createRoot(validSettings, [backupTransaction]);
     const repository = await LedgerRepository.open(root);
     const next = previewAdd(repository.getState(), expense, mutationDependencies);
     await repository.saveTransactions(next.nextTransactions);
@@ -342,13 +343,16 @@ describe('inspection and validation', () => {
     );
 
     const backup = await inspectLedgerBackup(root, 'transactions');
-    expect(backup.transactions).toBe(1);
-    expect(backup.totals).toEqual({income: 500, expenses: 0, net: 500});
+    expect(backup).toMatchObject({
+      kind: 'transactions',
+      transactions: 1,
+      totals: {income: 5000, expenses: 0, net: 5000},
+    });
     backup.state.transactions[0]!.subject = 'changed backup inspection';
     expect(
       (await inspectLedgerBackup(root, 'transactions')).state.transactions[0]!
         .subject,
-    ).toBe(openingTransaction.subject);
+    ).toBe(backupTransaction.subject);
   });
 
   test('rejects a ledger whose aggregate arithmetic exceeds the safe integer range', async () => {

@@ -1,0 +1,310 @@
+import {
+  SourceConflictError,
+  type LedgerSettings,
+  type LedgerState,
+  type Transaction,
+} from '@class-fund/ledger';
+import type {LedgerRepository} from '@class-fund/ledger/node';
+import {cleanup, render} from 'ink-testing-library';
+import {afterEach, describe, expect, it, vi} from 'vitest';
+
+import {App} from '../src/app.js';
+import {SettingsScreen} from '../src/screens/settings-screen.js';
+
+const settings: LedgerSettings = {
+  schema_version: 1,
+  currency: 'TWD',
+  active_semester: '第一學期',
+  default_officer: '我',
+  semesters: [
+    {value: '第一學期', status: 'active'},
+    {value: '第二學期', status: 'active'},
+  ],
+  categories: [
+    {value: '期初餘額', status: 'active'},
+    {value: '教材與影印', status: 'active'},
+    {value: '未被引用的分類', status: 'active'},
+  ],
+  officers: [
+    {value: '我', status: 'active'},
+    {value: '另一位總務', status: 'active'},
+  ],
+};
+
+const transactions: Transaction[] = [
+  {
+    id: '018f7f2c-98c0-7d5a-a4df-1bcd4a670001',
+    date: '2026-08-01',
+    semester: '第一學期',
+    subject: '期初班費',
+    category: '期初餘額',
+    type: 'income',
+    amount: 4000,
+    handled_by: '我',
+    note: '',
+    created_at: '2026-08-01T08:00:00+08:00',
+  },
+  {
+    id: '018f7f2c-98c0-7d5a-a4df-1bcd4a670002',
+    date: '2026-08-17',
+    semester: '第一學期',
+    subject: '講義',
+    category: '教材與影印',
+    type: 'expense',
+    amount: 1000,
+    handled_by: '另一位總務',
+    note: '',
+    created_at: '2026-08-17T10:00:00+08:00',
+  },
+  {
+    id: '018f7f2c-98c0-7d5a-a4df-1bcd4a670003',
+    date: '2026-08-18',
+    semester: '第二學期',
+    subject: '活動補助',
+    category: '期初餘額',
+    type: 'income',
+    amount: 1000,
+    handled_by: '我',
+    note: '',
+    created_at: '2026-08-18T10:00:00+08:00',
+  },
+];
+
+async function nextRender(): Promise<void> {
+  await new Promise<void>((done) => setImmediate(done));
+}
+
+function deferred<T = void>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return {promise, resolve, reject};
+}
+
+async function choose(
+  stdin: {write(data: string): void},
+  value: string,
+): Promise<void> {
+  stdin.write(value);
+  await nextRender();
+}
+
+afterEach(() => cleanup());
+
+describe('SettingsScreen', () => {
+  it.each([
+    {
+      action: '1',
+      choice: '2',
+      assertion: (next: LedgerSettings) =>
+        expect(next.active_semester).toBe('第二學期'),
+    },
+    {
+      action: '2',
+      choice: '2',
+      assertion: (next: LedgerSettings) =>
+        expect(next.default_officer).toBe('另一位總務'),
+    },
+    {
+      action: '5',
+      choice: '3',
+      assertion: (next: LedgerSettings) =>
+        expect(next.categories).toContainEqual({
+          value: '未被引用的分類',
+          status: 'archived',
+        }),
+    },
+  ])('persists a configured settings operation', async ({action, choice, assertion}) => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, action);
+    await choose(stdin, choice);
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    assertion(onSave.mock.calls[0]![0]);
+  });
+
+  it('adds the 場地費 category', async () => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '3');
+    stdin.write('場地費');
+    await nextRender();
+    stdin.write('\r');
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0]![0].categories).toContainEqual({
+      value: '場地費',
+      status: 'active',
+    });
+  });
+
+  it.each([
+    {action: '4', choice: '1', reason: '目前學期不可封存'},
+    {action: '5', choice: '2', reason: '此分類已被交易引用，無法封存'},
+    {action: '6', choice: '1', reason: '預設經手人不可封存'},
+  ])('shows a refusal reason without saving', async ({action, choice, reason}) => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, action);
+    await choose(stdin, choice);
+    expect(lastFrame()).toContain(reason);
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a save after a source conflict', async () => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => {
+      throw new SourceConflictError('/private/settings.json');
+    });
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '3');
+    stdin.write('場地費');
+    await nextRender();
+    stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(lastFrame()).toContain('檔案已被外部修改。請重新載入後再試。'),
+    );
+    expect(lastFrame()).not.toContain('設定已儲存');
+    expect(lastFrame()).not.toContain('/private/settings.json');
+  });
+});
+
+describe('settings entry point', () => {
+  it('opens with s and persists through the repository before returning', async () => {
+    let state: LedgerState = {settings, transactions};
+    const saveSettings = vi.fn(async (next: LedgerSettings) => {
+      state = {...state, settings: structuredClone(next)};
+    });
+    const repository = {
+      getState: vi.fn(() => structuredClone(state)),
+      reload: vi.fn(),
+      saveSettings,
+      saveTransactions: vi.fn(),
+    } as unknown as LedgerRepository;
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={repository}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+
+    stdin.write('s');
+    await nextRender();
+    expect(lastFrame()).toContain('帳本設定');
+    await choose(stdin, '1');
+    await choose(stdin, '2');
+    await vi.waitFor(() => expect(saveSettings).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(lastFrame()).toContain('班費帳本'));
+    expect(saveSettings.mock.calls[0]![0].active_semester).toBe('第二學期');
+  });
+});
+
+describe('pre-publish check', () => {
+  it('locks cancel and mutation navigation until reload installs fresh state', async () => {
+    const pendingReload = deferred();
+    const freshTransactions = transactions;
+    let state: LedgerState = {settings, transactions: []};
+    const reload = vi.fn(async () => {
+      await pendingReload.promise;
+      state = {settings, transactions: freshTransactions};
+    });
+    const repository = {
+      getState: vi.fn(() => structuredClone(state)),
+      reload,
+      saveSettings: vi.fn(),
+      saveTransactions: vi.fn(),
+    } as unknown as LedgerRepository;
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={repository}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+
+    stdin.write('p');
+    await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    expect(lastFrame()).toContain('正在重新載入並檢查資料');
+
+    stdin.write('\r');
+    stdin.write('\u001b[27u');
+    stdin.write('a');
+    stdin.write('d');
+    await nextRender();
+    expect(lastFrame()).toContain('正在重新載入並檢查資料');
+    expect(lastFrame()).not.toContain('新增交易');
+    expect(lastFrame()).not.toContain('刪除交易');
+    expect(repository.saveTransactions).not.toHaveBeenCalled();
+
+    pendingReload.resolve();
+    await vi.waitFor(() => expect(lastFrame()).toContain('資料檢查通過'));
+    expect(lastFrame()).toContain('交易筆數 3');
+    expect(lastFrame()).toContain('目前總餘額 NT$4,000');
+
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('目前總餘額  NT$4,000'));
+    expect(lastFrame()).toContain('活動補助');
+  });
+
+  it('reloads before showing the fresh count and overall totals', async () => {
+    const freshTransactions = transactions;
+    let state: LedgerState = {settings, transactions: []};
+    const reload = vi.fn(async () => {
+      state = {settings, transactions: freshTransactions};
+    });
+    const repository = {
+      getState: vi.fn(() => structuredClone(state)),
+      reload,
+      saveSettings: vi.fn(),
+      saveTransactions: vi.fn(),
+    } as unknown as LedgerRepository;
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={repository}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+
+    stdin.write('p');
+    await vi.waitFor(() => expect(lastFrame()).toContain('資料檢查通過'));
+    expect(reload).toHaveBeenCalledOnce();
+    expect(lastFrame()).toContain('交易筆數 3');
+    expect(lastFrame()).toContain('總收入 NT$5,000');
+    expect(lastFrame()).toContain('總支出 NT$1,000');
+    expect(lastFrame()).toContain('目前總餘額 NT$4,000');
+  });
+});
