@@ -4,9 +4,17 @@ import {Box, Text, useInput, useWindowSize} from 'ink';
 import {
   createLedgerView,
   emptyFilter,
+  LedgerValidationError,
+  previewAdd,
+  previewDelete,
+  previewEdit,
+  SourceConflictError,
   type LedgerFilter,
   type LedgerSettings,
   type LedgerState,
+  type MutationPreview,
+  type Transaction,
+  type TransactionInput,
 } from '@class-fund/ledger';
 import type {LedgerInspection, LedgerRepository} from '@class-fund/ledger/node';
 
@@ -15,7 +23,10 @@ import {FilterBar} from './components/filter-bar.js';
 import {Summary} from './components/summary.js';
 import {TransactionTable} from './components/transaction-table.js';
 import {writeSetupMarker} from './setup-marker.js';
+import {ConfirmScreen} from './screens/confirm-screen.js';
+import {DeleteScreen} from './screens/delete-screen.js';
 import {SetupScreen} from './screens/setup-screen.js';
+import {TransactionForm} from './screens/transaction-form.js';
 
 export interface ReadyAppProps {
   repository: LedgerRepository;
@@ -34,7 +45,52 @@ export type AppProps = (ReadyAppProps | RecoveryAppProps) & {
   today?: () => string;
 };
 
-export type Screen = {name: 'overview'} | {name: 'setup'};
+export type Screen =
+  | {name: 'overview'}
+  | {name: 'setup'}
+  | {name: 'form'; mode: 'add' | 'edit'; transactionId?: string}
+  | {name: 'confirm'; preview: MutationPreview}
+  | {name: 'delete'; transactionId: string}
+  | {name: 'error'; message: string};
+
+function localToday(): string {
+  const date = new Date();
+  const year = String(date.getFullYear()).padStart(4, '0');
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function transactionInput(transaction: Transaction): TransactionInput {
+  return {
+    date: transaction.date,
+    semester: transaction.semester,
+    subject: transaction.subject,
+    category: transaction.category,
+    type: transaction.type,
+    amount: transaction.amount,
+    handled_by: transaction.handled_by,
+    note: transaction.note,
+  };
+}
+
+function issueMessage(error: LedgerValidationError): string {
+  return error.issues
+    .map((issue) => {
+      const source = issue.source === 'settings' ? '設定' : '交易';
+      const row = issue.row === undefined ? '' : ` / 第 ${issue.row} 列`;
+      return `${source}${row} / ${issue.field}：${issue.message}`;
+    })
+    .join('\n');
+}
+
+function mutationErrorMessage(error: unknown): string {
+  if (error instanceof SourceConflictError) {
+    return '檔案已被外部修改。請重新載入後再試。';
+  }
+  if (error instanceof LedgerValidationError) return issueMessage(error);
+  return '無法儲存交易，請確認檔案權限後再試一次。';
+}
 
 function RecoveryApp({
   inspection,
@@ -63,6 +119,7 @@ function ReadyApp({
   root,
   setupComplete,
   onExit,
+  today = localToday,
 }: AppProps & ReadyAppProps) {
   const [screen, setScreen] = useState<Screen>(() =>
     setupComplete ? {name: 'overview'} : {name: 'setup'},
@@ -71,6 +128,7 @@ function ReadyApp({
   const [setupError, setSetupError] = useState<string | null>(null);
   const [filter] = useState<LedgerFilter>(() => ({...emptyFilter}));
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [formToday, setFormToday] = useState('');
   const {columns} = useWindowSize();
   const view = useMemo(
     () => createLedgerView(state.transactions, filter),
@@ -95,7 +153,30 @@ function ReadyApp({
         onExit();
         return;
       }
-      if (key.downArrow || input === 'j') {
+      if (input === 'a') {
+        setFormToday(today());
+        setScreen({name: 'form', mode: 'add'});
+      } else if (input === 'e') {
+        const transaction = view.rows[selectedIndex]?.transaction;
+        if (transaction !== undefined) {
+          setFormToday(today());
+          setScreen({
+            name: 'form',
+            mode: 'edit',
+            transactionId: transaction.id,
+          });
+        }
+      } else if (input === 'd') {
+        const transaction = view.rows[selectedIndex]?.transaction;
+        if (transaction !== undefined) {
+          try {
+            previewDelete(state, transaction.id);
+            setScreen({name: 'delete', transactionId: transaction.id});
+          } catch (error) {
+            setScreen({name: 'error', message: mutationErrorMessage(error)});
+          }
+        }
+      } else if (key.downArrow || input === 'j') {
         setSelectedIndex((current) =>
           view.rows.length === 0
             ? 0
@@ -130,6 +211,47 @@ function ReadyApp({
     setScreen({name: 'overview'});
   }
 
+  function reviewTransaction(input: TransactionInput): void {
+    if (screen.name !== 'form') return;
+    try {
+      const preview =
+        screen.mode === 'add'
+          ? previewAdd(state, input)
+          : previewEdit(state, screen.transactionId!, input);
+      setScreen({name: 'confirm', preview});
+    } catch (error) {
+      setScreen({name: 'error', message: mutationErrorMessage(error)});
+    }
+  }
+
+  async function persistPreview(preview: MutationPreview): Promise<void> {
+    try {
+      await repository.saveTransactions(preview.nextTransactions);
+      const nextState = repository.getState();
+      setState(nextState);
+
+      if (preview.kind !== 'delete') {
+        const rows = createLedgerView(nextState.transactions, filter).rows;
+        const nextIndex = rows.findIndex(
+          (row) => row.transaction.id === preview.target.id,
+        );
+        if (nextIndex >= 0) setSelectedIndex(nextIndex);
+      }
+      setScreen({name: 'overview'});
+    } catch (error) {
+      setScreen({name: 'error', message: mutationErrorMessage(error)});
+    }
+  }
+
+  function confirmDelete(transactionId: string): void {
+    try {
+      const preview = previewDelete(state, transactionId);
+      void persistPreview(preview);
+    } catch (error) {
+      setScreen({name: 'error', message: mutationErrorMessage(error)});
+    }
+  }
+
   if (screen.name === 'setup') {
     return (
       <SetupScreen
@@ -137,6 +259,75 @@ function ReadyApp({
         transactions={state.transactions}
         onSubmit={completeSetup}
         error={setupError}
+      />
+    );
+  }
+
+  if (screen.name === 'form') {
+    const transaction =
+      screen.mode === 'edit'
+        ? state.transactions.find(
+            (candidate) => candidate.id === screen.transactionId,
+          )
+        : undefined;
+    if (screen.mode === 'edit' && transaction === undefined) {
+      return (
+        <ModalError
+          message="找不到選取的交易。"
+          onBack={() => setScreen({name: 'overview'})}
+        />
+      );
+    }
+    return (
+      <TransactionForm
+        mode={screen.mode}
+        settings={state.settings}
+        {...(transaction === undefined
+          ? {}
+          : {initialValue: transactionInput(transaction)})}
+        today={formToday}
+        onReview={reviewTransaction}
+        onCancel={() => setScreen({name: 'overview'})}
+      />
+    );
+  }
+
+  if (screen.name === 'confirm') {
+    return (
+      <ConfirmScreen
+        preview={screen.preview}
+        onConfirm={() => void persistPreview(screen.preview)}
+        onCancel={() => setScreen({name: 'overview'})}
+      />
+    );
+  }
+
+  if (screen.name === 'delete') {
+    const transaction = state.transactions.find(
+      (candidate) => candidate.id === screen.transactionId,
+    );
+    if (transaction === undefined) {
+      return (
+        <ModalError
+          message="找不到選取的交易。"
+          onBack={() => setScreen({name: 'overview'})}
+        />
+      );
+    }
+    return (
+      <DeleteScreen
+        transaction={transaction}
+        onConfirm={() => confirmDelete(screen.transactionId)}
+        onCancel={() => setScreen({name: 'overview'})}
+      />
+    );
+  }
+
+  if (screen.name === 'error') {
+    return (
+      <ModalError
+        message={screen.message}
+        onBack={() => setScreen({name: 'overview'})}
       />
     );
   }
@@ -156,6 +347,20 @@ function ReadyApp({
         width={columns ?? 80}
       />
       <CommandBar />
+    </Box>
+  );
+}
+
+function ModalError({message, onBack}: {message: string; onBack(): void}) {
+  useInput((_input, key) => {
+    if (key.escape || key.return) onBack();
+  });
+
+  return (
+    <Box flexDirection="column">
+      <Text bold>無法完成交易</Text>
+      <Text color="red">{message}</Text>
+      <Text>按 Enter 或 Esc 返回</Text>
     </Box>
   );
 }
