@@ -1,0 +1,198 @@
+:root {
+  color: #202124;
+  background: #ffffff;
+  font-family:
+    "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  font-synthesis: none;
+  letter-spacing: 0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #ffffff;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+.report-shell {
+  width: min(100% - 32px, 1180px);
+  margin-inline: auto;
+  padding-block: 32px 56px;
+}
+
+.report-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.report-header h1 {
+  margin: 0;
+  font-size: 1.875rem;
+  line-height: 1.25;
+}
+
+.updated-at {
+  display: flex;
+  flex-direction: column;
+  align-items: end;
+  gap: 4px;
+  margin: 0;
+  color: #62666d;
+  font-size: 0.875rem;
+}
+
+.updated-at time {
+  color: #202124;
+}
+
+.summary-band {
+  border-block: 1px solid #d9dcdf;
+  padding-block: 20px;
+}
+
+.summary-band dl {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 24px;
+  margin: 0;
+}
+
+.summary-band dl > div {
+  min-width: 0;
+}
+
+.summary-band dt {
+  color: #62666d;
+  font-size: 0.875rem;
+}
+
+.summary-band dd {
+  margin: 6px 0 0;
+  font-size: 1.25rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.summary-band .summary-primary dd {
+  font-size: 1.75rem;
+}
+
+.amount-income,
+.type-income {
+  color: #13795b;
+}
+
+.amount-expense,
+.type-expense {
+  color: #b42318;
+}
+
+.transactions {
+  margin-top: 32px;
+}
+
+.transactions h2 {
+  margin: 0 0 12px;
+  font-size: 1.125rem;
+}
+
+.table-scroll {
+  overflow-x: auto;
+  border: 1px solid #d9dcdf;
+  border-radius: 6px;
+}
+
+table {
+  width: 100%;
+  min-width: 820px;
+  border-collapse: collapse;
+  font-size: 0.9375rem;
+}
+
+th,
+td {
+  padding: 12px 14px;
+  border-bottom: 1px solid #d9dcdf;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #f4f5f6;
+  color: #62666d;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+td time,
+.amount-column {
+  white-space: nowrap;
+}
+
+.amount-column {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.type-label {
+  font-weight: 700;
+}
+
+.subject,
+.note {
+  display: block;
+}
+
+.note {
+  margin-top: 3px;
+  color: #62666d;
+  font-size: 0.8125rem;
+  white-space: pre-line;
+}
+
+.empty-row {
+  padding-block: 32px;
+  color: #62666d;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .report-shell {
+    width: min(100% - 24px, 1180px);
+    padding-block: 24px 40px;
+  }
+
+  .report-header {
+    align-items: start;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .updated-at {
+    align-items: start;
+  }
+
+  .summary-band dl {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .summary-primary {
+    grid-column: 1 / -1;
+  }
+}
