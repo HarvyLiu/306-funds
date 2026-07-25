@@ -500,17 +500,36 @@ describe('settings option mutations', () => {
   });
 
   test.each([
-    {name: 'active duplicate', value: '教材與影印'},
-    {name: 'archived duplicate', value: '已封存類別'},
-  ])('rejects an $name when adding an option', ({value}) => {
+    {group: 'semesters', value: '第一學期'},
+    {group: 'categories', value: '教材與影印'},
+    {group: 'officers', value: '我'},
+  ] as const)('rejects an active $group duplicate when adding an option', ({group, value}) => {
     const state = stateFixture();
     state.settings = settingsWithArchivedOptions();
 
-    const error = validationError(() =>
-      addOption(state, 'categories', value),
-    );
+    const error = validationError(() => addOption(state, group, value));
 
-    expectIssue(error, 'settings', 'categories');
+    expectIssue(error, 'settings', group);
+  });
+
+  test.each([
+    {group: 'semesters', value: '已封存學期'},
+    {group: 'categories', value: '已封存類別'},
+    {group: 'officers', value: '已卸任總務'},
+  ] as const)('reactivates an archived $group option without mutating state', ({group, value}) => {
+    const state = stateFixture();
+    state.settings = settingsWithArchivedOptions();
+    const stateBefore = structuredClone(state);
+
+    const settings = addOption(state, group, value);
+
+    expect(settings[group]).toContainEqual({value, status: 'active'});
+    expect(settings[group].filter((option) => option.value === value)).toHaveLength(1);
+    expect(settings.active_semester).toBe(state.settings.active_semester);
+    expect(settings.default_officer).toBe(state.settings.default_officer);
+    expect(settings).not.toBe(state.settings);
+    expect(settings[group]).not.toBe(state.settings[group]);
+    expect(state).toEqual(stateBefore);
   });
 
   test.each(['', ' 新類別', '新類別 '])(

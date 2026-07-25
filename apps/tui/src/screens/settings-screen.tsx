@@ -28,19 +28,35 @@ export interface SettingsScreenProps {
 type Action =
   | 'semester'
   | 'officer'
+  | 'add-semester'
+  | 'add-officer'
   | 'add-category'
   | 'archive-semester'
   | 'archive-category'
   | 'archive-officer';
 
+type AddAction = Extract<Action, `add-${string}`>;
+
 const actions: Array<{label: string; value: Action}> = [
   {label: '目前學期', value: 'semester'},
   {label: '預設經手人', value: 'officer'},
+  {label: '新增學期', value: 'add-semester'},
+  {label: '新增經手人', value: 'add-officer'},
   {label: '新增分類', value: 'add-category'},
   {label: '封存學期', value: 'archive-semester'},
   {label: '封存分類', value: 'archive-category'},
   {label: '封存經手人', value: 'archive-officer'},
 ];
+
+const addOptionGroups: Record<AddAction, OptionGroup> = {
+  'add-semester': 'semesters',
+  'add-officer': 'officers',
+  'add-category': 'categories',
+};
+
+function isAddAction(action: Action): action is AddAction {
+  return action in addOptionGroups;
+}
 
 function activeOptions(options: readonly LedgerOption[]): LedgerOption[] {
   return options.filter((option) => option.status === 'active');
@@ -63,6 +79,8 @@ function validationMessage(
     return '此經手人已被交易引用，無法封存';
   }
   if (messages.includes('Option value is already configured')) {
+    if (action === 'add-semester') return '此學期已存在';
+    if (action === 'add-officer') return '此經手人已存在';
     return '此分類已存在';
   }
   return '設定內容無效，請檢查選擇或輸入值';
@@ -75,7 +93,7 @@ export function SettingsScreen({
   onSaved,
 }: SettingsScreenProps) {
   const [action, setAction] = useState<Action | null>(null);
-  const [category, setCategory] = useState('');
+  const [optionValue, setOptionValue] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const pendingRef = useRef(false);
@@ -86,6 +104,7 @@ export function SettingsScreen({
       if (action === null) onCancel();
       else {
         setAction(null);
+        setOptionValue('');
         setMessage(null);
       }
     },
@@ -129,8 +148,10 @@ export function SettingsScreen({
         case 'officer':
           next = setDefaultOfficer(state, value);
           break;
+        case 'add-semester':
+        case 'add-officer':
         case 'add-category':
-          next = addOption(state, 'categories', value);
+          next = addOption(state, addOptionGroups[action], value);
           break;
         default: {
           const group: OptionGroup =
@@ -159,17 +180,19 @@ export function SettingsScreen({
         items={actions}
         onSelect={(item) => {
           setMessage(null);
+          setOptionValue('');
           setAction(item.value);
         }}
       />
     );
-  } else if (action === 'add-category') {
+  } else if (isAddAction(action)) {
     content = (
       <TextInput
-        value={category}
+        value={optionValue}
+        focus={!pending}
         onChange={(value) => {
           setMessage(null);
-          setCategory(value);
+          setOptionValue(value);
         }}
         onSubmit={propose}
       />
@@ -184,6 +207,7 @@ export function SettingsScreen({
     content = (
       <SelectInput
         key={action}
+        isFocused={!pending}
         items={options.map((option) => ({
           label: option.value,
           value: option.value,

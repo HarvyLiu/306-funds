@@ -359,8 +359,15 @@ export function addOption(
   const optionGroup = requireOptionGroup(group);
   const settings = validateSettingsValue(state.settings);
 
-  if (settings[optionGroup].some((option) => option.value === value)) {
+  const existing = settings[optionGroup].find(
+    (option) => option.value === value,
+  );
+  if (existing?.status === 'active') {
     settingsFailure(optionGroup, 'Option value is already configured');
+  }
+  if (existing !== undefined) {
+    existing.status = 'active';
+    return validateSettingsValue(settings);
   }
 
   settings[optionGroup].push({value, status: 'active'});

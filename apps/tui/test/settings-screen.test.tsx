@@ -109,7 +109,7 @@ describe('SettingsScreen', () => {
         expect(next.default_officer).toBe('另一位總務'),
     },
     {
-      action: '5',
+      action: '7',
       choice: '3',
       assertion: (next: LedgerSettings) =>
         expect(next.categories).toContainEqual({
@@ -133,7 +133,127 @@ describe('SettingsScreen', () => {
     assertion(onSave.mock.calls[0]![0]);
   });
 
-  it('adds the 場地費 category', async () => {
+  it.each([
+    {
+      action: '3',
+      value: '第三學期',
+      group: 'semesters' as const,
+      unchanged: (next: LedgerSettings) =>
+        expect(next.active_semester).toBe('第一學期'),
+    },
+    {
+      action: '4',
+      value: '王小明',
+      group: 'officers' as const,
+      unchanged: (next: LedgerSettings) =>
+        expect(next.default_officer).toBe('我'),
+    },
+  ])(
+    'adds $value as an active $group option without changing the selected setting',
+    async ({action, value, group, unchanged}) => {
+      const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+      const {stdin} = render(
+        <SettingsScreen
+          state={{settings, transactions}}
+          onSave={onSave}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      await choose(stdin, action);
+      stdin.write(value);
+      await nextRender();
+      stdin.write('\r');
+      await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+      const next = onSave.mock.calls[0]![0];
+      expect(next[group]).toContainEqual({value, status: 'active'});
+      unchanged(next);
+    },
+  );
+
+  it.each([
+    {action: '3', value: '第三學期', group: 'semesters' as const},
+    {action: '4', value: '王小明', group: 'officers' as const},
+  ])(
+    'reactivates the archived $value $group option',
+    async ({action, value, group}) => {
+      const archivedSettings = structuredClone(settings);
+      archivedSettings[group].push({value, status: 'archived'});
+      const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+      const {stdin} = render(
+        <SettingsScreen
+          state={{settings: archivedSettings, transactions}}
+          onSave={onSave}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      await choose(stdin, action);
+      stdin.write(value);
+      await nextRender();
+      stdin.write('\r');
+      await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+      expect(onSave.mock.calls[0]![0][group]).toEqual(
+        expect.arrayContaining([{value, status: 'active'}]),
+      );
+      expect(
+        onSave.mock.calls[0]![0][group].filter(
+          (option) => option.value === value,
+        ),
+      ).toHaveLength(1);
+    },
+  );
+
+  it.each([
+    {action: '3', value: '第一學期', reason: '此學期已存在'},
+    {action: '4', value: '我', reason: '此經手人已存在'},
+    {action: '5', value: '期初餘額', reason: '此分類已存在'},
+  ])(
+    'shows the group-specific duplicate message $reason',
+    async ({action, value, reason}) => {
+      const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+      const {lastFrame, stdin} = render(
+        <SettingsScreen
+          state={{settings, transactions}}
+          onSave={onSave}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      await choose(stdin, action);
+      stdin.write(value);
+      await nextRender();
+      stdin.write('\r');
+      await vi.waitFor(() => expect(lastFrame()).toContain(reason));
+      expect(onSave).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    {action: '3', label: '新增學期'},
+    {action: '4', label: '新增經手人'},
+    {action: '5', label: '新增分類'},
+  ])('cancels $label input with Escape without saving', async ({action, label}) => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const onCancel = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={onCancel}
+      />,
+    );
+
+    await choose(stdin, action);
+    stdin.write('尚未儲存');
+    await nextRender();
+    stdin.write('\u001b[27u');
+    await vi.waitFor(() => expect(lastFrame()).toContain(label));
+    expect(onSave).not.toHaveBeenCalled();
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('clears cancelled text before another add action', async () => {
     const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
     const {stdin} = render(
       <SettingsScreen
@@ -144,6 +264,33 @@ describe('SettingsScreen', () => {
     );
 
     await choose(stdin, '3');
+    stdin.write('殘留文字');
+    await nextRender();
+    stdin.write('\u001b[27u');
+    await nextRender();
+    await choose(stdin, '4');
+    stdin.write('王小華');
+    await nextRender();
+    stdin.write('\r');
+
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0]![0].officers).toContainEqual({
+      value: '王小華',
+      status: 'active',
+    });
+  });
+
+  it('adds the 場地費 category', async () => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '5');
     stdin.write('場地費');
     await nextRender();
     stdin.write('\r');
@@ -154,10 +301,85 @@ describe('SettingsScreen', () => {
     });
   });
 
+  it('locks text input, cancellation, and resubmission until saving settles', async () => {
+    const pendingSave = deferred();
+    const onSave = vi.fn(() => pendingSave.promise);
+    const onCancel = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={onCancel}
+      />,
+    );
+
+    await choose(stdin, '5');
+    stdin.write('場地費');
+    await nextRender();
+    stdin.write('\r');
+    await vi.waitFor(() =>
+      expect(lastFrame()).toContain('正在儲存設定'),
+    );
+
+    stdin.write('改');
+    stdin.write('\u001b[27u');
+    stdin.write('\r');
+    await nextRender();
+
+    expect(lastFrame()).toContain('場地費');
+    expect(lastFrame()).not.toContain('場地費改');
+    expect(lastFrame()).toContain('正在儲存設定');
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    pendingSave.resolve();
+    await vi.waitFor(() => expect(lastFrame()).toContain('設定已儲存'));
+    stdin.write('改');
+    await nextRender();
+    expect(lastFrame()).toContain('場地費改');
+  });
+
+  it('locks option navigation, cancellation, and selection until saving settles', async () => {
+    const pendingSave = deferred();
+    const onSave = vi.fn(() => pendingSave.promise);
+    const onCancel = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={onCancel}
+      />,
+    );
+
+    await choose(stdin, '1');
+    await choose(stdin, '2');
+    await vi.waitFor(() =>
+      expect(lastFrame()).toContain('正在儲存設定'),
+    );
+    expect(lastFrame()).toContain('❯ 第一學期');
+
+    stdin.write('j');
+    stdin.write('1');
+    stdin.write('\r');
+    stdin.write('\u001b[27u');
+    await nextRender();
+
+    expect(lastFrame()).toContain('❯ 第一學期');
+    expect(lastFrame()).toContain('正在儲存設定');
+    expect(onSave).toHaveBeenCalledOnce();
+    expect(onCancel).not.toHaveBeenCalled();
+
+    pendingSave.resolve();
+    await vi.waitFor(() => expect(lastFrame()).toContain('設定已儲存'));
+    stdin.write('j');
+    await nextRender();
+    expect(lastFrame()).toContain('❯ 第二學期');
+  });
+
   it.each([
-    {action: '4', choice: '1', reason: '目前學期不可封存'},
-    {action: '5', choice: '2', reason: '此分類已被交易引用，無法封存'},
-    {action: '6', choice: '1', reason: '預設經手人不可封存'},
+    {action: '6', choice: '1', reason: '目前學期不可封存'},
+    {action: '7', choice: '2', reason: '此分類已被交易引用，無法封存'},
+    {action: '8', choice: '1', reason: '預設經手人不可封存'},
   ])('shows a refusal reason without saving', async ({action, choice, reason}) => {
     const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
     const {lastFrame, stdin} = render(
@@ -186,7 +408,7 @@ describe('SettingsScreen', () => {
       />,
     );
 
-    await choose(stdin, '3');
+    await choose(stdin, '5');
     stdin.write('場地費');
     await nextRender();
     stdin.write('\r');
