@@ -35,10 +35,12 @@ value through `目前學期` or `預設經手人` afterward.
 | `新增經手人` | `officers` |
 | `新增分類` | `categories` |
 
-Each action calls the existing `addOption(state, group, value)` mutation and
-persists the returned settings through `onSave`. This keeps validation,
-canonicalization, source-conflict detection, and atomic repository writes on
-the existing path. The settings schema and JSON format do not change.
+Each action calls `addOption(state, group, value)` and persists the returned
+settings through `onSave`. The ledger mutation reactivates an archived match
+instead of appending a duplicate. Validation, canonicalization,
+source-conflict detection, and atomic repository writes remain on the existing
+path. The settings schema, JSON format, repository save flow, and persistence
+format do not change.
 
 If the value exists with `archived` status, `addOption` reactivates it. If an
 active value already exists, the screen shows a group-specific message:
@@ -52,17 +54,19 @@ permission errors retain their current handling.
 
 ## Code Changes
 
-Limit production changes to `apps/tui/src/screens/settings-screen.tsx` unless a
-small shared helper removes meaningful duplication. Extend the action union,
-menu items, text-input state, option-group mapping, and duplicate-message
-selection. Do not change ledger contracts or repository behavior.
+Extend `apps/tui/src/screens/settings-screen.tsx` with the new actions, shared
+text-input state, option-group mapping, and duplicate-message selection. Update
+`packages/ledger/src/mutations.ts` so `addOption` reactivates archived matches
+across all three `OptionGroup` values while it continues to reject active
+duplicates. The mutation signature, repository save implementation, and
+persistence format remain unchanged.
 
 Update the Traditional Chinese operating instructions in `README.md` so the
 settings command states that semesters, officers, and categories can be added.
 
 ## Tests
 
-Add failing settings-screen tests before production changes. Cover:
+Add failing settings-screen tests before the TUI changes. Cover:
 
 - adding a semester without changing the current semester;
 - adding an officer without changing the default officer;
@@ -70,6 +74,11 @@ Add failing settings-screen tests before production changes. Cover:
 - group-specific duplicate messages;
 - Escape cancellation without writes;
 - the existing add-category flow as a regression check.
+
+Add ledger mutation tests before changing `addOption`. Cover active duplicate
+rejection and archived-value reactivation for semesters, categories, and
+officers. Verify that reactivation creates no duplicate, preserves the current
+semester and default officer, and leaves the supplied `LedgerState` unchanged.
 
 After the focused tests pass, run the full TUI and ledger suites, workspace
 typecheck, production build and binary smoke, canonical data validation, and
