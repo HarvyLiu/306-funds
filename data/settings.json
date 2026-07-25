@@ -1,15 +1,19 @@
 {
   "schema_version": 1,
   "currency": "TWD",
-  "active_semester": "第一學期",
-  "default_officer": "我",
+  "active_semester": "三上",
+  "default_officer": "劉鎬維",
   "semesters": [
     {
-      "value": "第一學期",
+      "value": "三上",
       "status": "active"
     },
     {
-      "value": "第二學期",
+      "value": "暑期輔導",
+      "status": "active"
+    },
+    {
+      "value": "三下",
       "status": "active"
     }
   ],
@@ -49,11 +53,11 @@
   ],
   "officers": [
     {
-      "value": "我",
+      "value": "劉鎬維",
       "status": "active"
     },
     {
-      "value": "另一位總務",
+      "value": "陳信衡",
       "status": "active"
     }
   ]
