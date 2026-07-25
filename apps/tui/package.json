@@ -10,7 +10,8 @@
     "dev": "tsx src/main.tsx",
     "build": "tsup src/main.tsx --format esm --dts --clean",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run && npm run test:bin",
+    "test:bin": "npm run build && node scripts/smoke-built-bin.mjs"
   },
   "dependencies": {
     "@class-fund/ledger": "*",
