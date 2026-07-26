@@ -107,10 +107,11 @@ function independentTransactionSettings(text: string): LedgerSettings {
   const categories = referenceOptions(records, 'category');
   const officers = referenceOptions(records, 'handled_by');
   return {
-    schema_version: 1,
+    schema_version: 2,
     currency: 'TWD',
     active_semester: semesters[0]?.value ?? '',
     default_officer: officers[0]?.value ?? '',
+    locked_semesters: [],
     semesters,
     categories,
     officers,

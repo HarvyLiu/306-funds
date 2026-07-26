@@ -15,7 +15,7 @@ const optionSchema = z.strictObject({
   status: z.enum(['active', 'archived']),
 });
 
-const settingsSchema = z.strictObject({
+const settingsFields = {
   schema_version: z.literal(1),
   currency: z.literal('TWD'),
   active_semester: persistedValueSchema,
@@ -23,11 +23,23 @@ const settingsSchema = z.strictObject({
   semesters: z.array(optionSchema),
   categories: z.array(optionSchema),
   officers: z.array(optionSchema),
+};
+
+const settingsV1Schema = z.strictObject(settingsFields);
+
+const settingsV2Schema = z.strictObject({
+  ...settingsFields,
+  schema_version: z.literal(2),
+  locked_semesters: z.array(persistedValueSchema),
 });
 
 type OptionField = 'semesters' | 'categories' | 'officers';
 
 type ReferenceField = 'active_semester' | 'default_officer';
+
+type PersistedSettings =
+  | z.infer<typeof settingsV1Schema>
+  | z.infer<typeof settingsV2Schema>;
 
 interface InspectableOption {
   value: string;
@@ -91,6 +103,54 @@ function addActiveReferenceIssue(
   }
 }
 
+function addLockedSemesterIssues(
+  issues: LedgerIssue[],
+  lockedSemesters: unknown,
+  semesters: unknown,
+  activeSemester: unknown,
+): void {
+  if (!Array.isArray(lockedSemesters)) return;
+
+  const seen = new Set<string>();
+
+  lockedSemesters.forEach((lockedSemester, index) => {
+    if (typeof lockedSemester !== 'string') return;
+
+    const field = `locked_semesters.${index}`;
+    if (seen.has(lockedSemester)) {
+      issues.push(
+        ledgerIssue(field, lockedSemester, 'Locked semesters must be unique'),
+      );
+    }
+    seen.add(lockedSemester);
+
+    const hasActiveSemester =
+      Array.isArray(semesters) &&
+      semesters.some((candidate) => {
+        const option = inspectOption(candidate);
+        return option?.value === lockedSemester && option.status === 'active';
+      });
+    if (!hasActiveSemester) {
+      issues.push(
+        ledgerIssue(
+          field,
+          lockedSemester,
+          'Value must reference an active semester',
+        ),
+      );
+    }
+    if (lockedSemester === activeSemester) {
+      issues.push(
+        ledgerIssue(
+          'active_semester',
+          activeSemester,
+          'Active semester cannot be locked',
+        ),
+      );
+    }
+  });
+}
+
 function semanticIssues(value: unknown): LedgerIssue[] {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     return [];
@@ -114,8 +174,37 @@ function semanticIssues(value: unknown): LedgerIssue[] {
     settings.default_officer,
     settings.officers,
   );
+  addLockedSemesterIssues(
+    issues,
+    settings.locked_semesters,
+    settings.semesters,
+    settings.active_semester,
+  );
 
   return issues;
+}
+
+function schemaFor(
+  value: unknown,
+): typeof settingsV1Schema | typeof settingsV2Schema {
+  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
+    const schemaVersion = (value as Record<string, unknown>).schema_version;
+    if (schemaVersion === 1) return settingsV1Schema;
+  }
+
+  return settingsV2Schema;
+}
+
+function normalizeSettings(value: PersistedSettings): LedgerSettings {
+  if (value.schema_version === 1) {
+    return {
+      ...value,
+      schema_version: 2,
+      locked_semesters: [],
+    };
+  }
+
+  return value;
 }
 
 function dottedField(path: PropertyKey[]): string {
@@ -187,12 +276,14 @@ function deduplicateIssues(issues: LedgerIssue[]): LedgerIssue[] {
 }
 
 export function validateSettingsValue(value: unknown): LedgerSettings {
-  let result: ReturnType<typeof settingsSchema.safeParse>;
+  let result:
+    | ReturnType<typeof settingsV1Schema.safeParse>
+    | ReturnType<typeof settingsV2Schema.safeParse>;
   let issues: LedgerIssue[];
 
   try {
-    result = settingsSchema.safeParse(value);
-    const semanticValue = result.success ? result.data : value;
+    result = schemaFor(value).safeParse(value);
+    const semanticValue = result.success ? normalizeSettings(result.data) : value;
     issues = deduplicateIssues([
       ...(result.success ? [] : toLedgerIssues(result.error, value)),
       ...semanticIssues(semanticValue),
@@ -211,7 +302,7 @@ export function validateSettingsValue(value: unknown): LedgerSettings {
     throw new LedgerValidationError(issues);
   }
 
-  return result.data;
+  return normalizeSettings(result.data);
 }
 
 export function parseSettingsText(text: string): LedgerSettings {

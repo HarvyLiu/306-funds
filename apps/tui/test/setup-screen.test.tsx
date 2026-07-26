@@ -22,10 +22,11 @@ import {
 import {SetupScreen} from '../src/screens/setup-screen.js';
 
 const starterSettings: LedgerSettings = {
-  schema_version: 1,
+  schema_version: 2,
   currency: 'TWD',
   active_semester: '第一學期',
   default_officer: '我',
+  locked_semesters: [],
   semesters: [
     {value: '第一學期', status: 'active'},
     {value: '第二學期', status: 'active'},
@@ -212,10 +213,11 @@ describe('SetupScreen', () => {
 
     expect(onSubmit).toHaveBeenCalledOnce();
     expect(onSubmit).toHaveBeenCalledWith({
-      schema_version: 1,
+      schema_version: 2,
       currency: 'TWD',
       active_semester: '114學年度第一學期',
       default_officer: '王小明',
+      locked_semesters: [],
       semesters: [{value: '114學年度第一學期', status: 'active'}],
       categories: starterSettings.categories,
       officers: [

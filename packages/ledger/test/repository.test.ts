@@ -83,6 +83,16 @@ async function readUtf8(path: string): Promise<string> {
   return fs.readFile(path, 'utf8');
 }
 
+function validV1Settings(): Record<string, unknown> {
+  const value = structuredClone(validSettings) as unknown as Record<
+    string,
+    unknown
+  >;
+  value.schema_version = 1;
+  delete value.locked_semesters;
+  return value;
+}
+
 function malformedReplacementBytes(
   text: string,
   replacementBytes: number | readonly number[],
@@ -142,6 +152,22 @@ function fileSystemProxy(
 }
 
 describe('ledger repository paths and state', () => {
+  test('opens v1 settings as v2 state without rewriting the source text', async () => {
+    const root = await createRoot();
+    const paths = ledgerPaths(root);
+    const v1Text = `${JSON.stringify(validV1Settings(), null, 2)}\n`;
+    await fs.writeFile(paths.settings, v1Text);
+
+    const repository = await LedgerRepository.open(root);
+
+    expect(repository.getState().settings).toEqual({
+      ...validSettings,
+      schema_version: 2,
+      locked_semesters: [],
+    });
+    expect(await readUtf8(paths.settings)).toBe(v1Text);
+  });
+
   test('resolves canonical source and backup paths', () => {
     const root = join('relative', 'ledger');
 

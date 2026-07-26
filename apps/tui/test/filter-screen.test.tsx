@@ -6,10 +6,11 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {App} from '../src/app.js';
 
 const settings: LedgerSettings = {
-  schema_version: 1,
+  schema_version: 2,
   currency: 'TWD',
   active_semester: '第一學期',
   default_officer: '我',
+  locked_semesters: [],
   semesters: [
     {value: '第一學期', status: 'active'},
     {value: '第二學期', status: 'active'},

@@ -8,10 +8,11 @@ export interface LedgerOption {
 }
 
 export interface LedgerSettings {
-  schema_version: 1;
+  schema_version: 2;
   currency: 'TWD';
   active_semester: string;
   default_officer: string;
+  locked_semesters: string[];
   semesters: LedgerOption[];
   categories: LedgerOption[];
   officers: LedgerOption[];

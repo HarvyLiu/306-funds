@@ -25,15 +25,35 @@ function validationError(run: () => unknown): LedgerValidationError {
   throw new Error('Expected settings validation to fail');
 }
 
+function validV1Settings(): Record<string, unknown> {
+  const value = structuredClone(validSettings) as unknown as Record<
+    string,
+    unknown
+  >;
+  value.schema_version = 1;
+  delete value.locked_semesters;
+  return value;
+}
+
 describe('settings parsing and validation', () => {
-  test('parses valid settings without changing their values', () => {
-    expect(parseSettingsText(JSON.stringify(validSettings))).toEqual(validSettings);
+  test('migrates valid v1 settings to v2 without mutating the input', () => {
+    const input = validV1Settings();
+    const before = structuredClone(input);
+    const expected = {
+      ...validSettings,
+      schema_version: 2,
+      locked_semesters: [],
+    };
+
+    expect(validateSettingsValue(input)).toEqual(expected);
+    expect(parseSettingsText(JSON.stringify(input))).toEqual(expected);
+    expect(input).toEqual(before);
   });
 
   test.each([
     {
       name: 'unsupported schema version',
-      value: settingsWith({schema_version: 2 as 1}),
+      value: settingsWith({schema_version: 3 as 2}),
       field: 'schema_version',
     },
     {
@@ -96,7 +116,7 @@ describe('settings parsing and validation', () => {
 
   test('collects semantic issues when strict schema validation also fails', () => {
     const value: Record<string, unknown> = {...structuredClone(validSettings)};
-    value.schema_version = 2;
+    value.schema_version = 3;
     value.unexpected = true;
     value.semesters = [
       {value: '第一學期', status: 'active'},
@@ -246,6 +266,110 @@ describe('settings parsing and validation', () => {
     );
   });
 
+  test('reports duplicate locked semesters at the duplicate index', () => {
+    const error = validationError(() =>
+      validateSettingsValue(
+        settingsWith({locked_semesters: ['第二學期', '第二學期']}),
+      ),
+    );
+
+    expect(error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'settings',
+          field: 'locked_semesters.1',
+          message: 'Locked semesters must be unique',
+        }),
+      ]),
+    );
+  });
+
+  test.each([
+    {
+      name: 'unknown locked semester',
+      locked_semesters: ['不存在的學期'],
+      field: 'locked_semesters.0',
+      message: 'Value must reference an active semester',
+    },
+    {
+      name: 'archived locked semester',
+      locked_semesters: ['第二學期'],
+      semesters: [
+        {value: '第一學期', status: 'active'},
+        {value: '第二學期', status: 'archived'},
+      ] as LedgerSettings['semesters'],
+      field: 'locked_semesters.0',
+      message: 'Value must reference an active semester',
+    },
+    {
+      name: 'active locked semester',
+      locked_semesters: ['第一學期'],
+      field: 'active_semester',
+      message: 'Active semester cannot be locked',
+    },
+  ])('rejects $name at its precise path', ({
+    locked_semesters,
+    semesters,
+    field,
+    message,
+  }) => {
+    const error = validationError(() =>
+      validateSettingsValue(
+        settingsWith({
+          locked_semesters,
+          ...(semesters === undefined ? {} : {semesters}),
+        }),
+      ),
+    );
+
+    expect(error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({source: 'settings', field, message}),
+      ]),
+    );
+  });
+
+  test('deduplicates active conflicts while preserving an indexed duplicate issue', () => {
+    const error = validationError(() =>
+      validateSettingsValue(
+        settingsWith({locked_semesters: ['第一學期', '第一學期']}),
+      ),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'active_semester',
+        value: '第一學期',
+        message: 'Active semester cannot be locked',
+      },
+      {
+        source: 'settings',
+        field: 'locked_semesters.1',
+        value: '第一學期',
+        message: 'Locked semesters must be unique',
+      },
+    ]);
+  });
+
+  test.each([
+    {name: 'blank', value: ''},
+    {name: 'padded', value: ' 第二學期'},
+  ])('rejects $name locked semester values', ({value}) => {
+    const error = validationError(() =>
+      validateSettingsValue(settingsWith({locked_semesters: [value]})),
+    );
+
+    expect(error.issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'settings',
+          field: 'locked_semesters.0',
+        }),
+      ]),
+    );
+  });
+
   test('does not echo malformed JSON contents in the error string', () => {
     const error = validationError(() =>
       parseSettingsText('{"active_semester":"student-name"'),
@@ -258,10 +382,29 @@ describe('settings parsing and validation', () => {
 });
 
 describe('settings utilities', () => {
-  test('serializes validated settings as two-space JSON with one trailing newline', () => {
-    const serialized = serializeSettings(validSettings);
+  test('serializes validated settings as deterministic v2 JSON with one trailing newline', () => {
+    const settings = {
+      ...validSettings,
+      locked_semesters: ['第二學期'],
+    };
+    const serialized = serializeSettings(settings);
 
-    expect(serialized).toBe(`${JSON.stringify(validSettings, null, 2)}\n`);
+    expect(serialized).toBe(
+      `${JSON.stringify(
+        {
+          schema_version: 2,
+          currency: settings.currency,
+          active_semester: settings.active_semester,
+          default_officer: settings.default_officer,
+          semesters: settings.semesters,
+          categories: settings.categories,
+          officers: settings.officers,
+          locked_semesters: settings.locked_semesters,
+        },
+        null,
+        2,
+      )}\n`,
+    );
     expect(serialized.endsWith('\n\n')).toBe(false);
   });
 

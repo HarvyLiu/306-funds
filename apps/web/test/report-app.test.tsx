@@ -29,10 +29,11 @@ import {ReportApp} from '../src/components/ReportApp.js';
 import type {ReportPayload} from '../src/lib/load-report.js';
 
 const settings: LedgerSettings = {
-  schema_version: 1,
+  schema_version: 2,
   currency: 'TWD',
   active_semester: '第一學期',
   default_officer: '我',
+  locked_semesters: [],
   semesters: [
     {value: '第一學期', status: 'active'},
     {value: '第二學期', status: 'active'},
