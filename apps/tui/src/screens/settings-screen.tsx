@@ -6,9 +6,11 @@ import TextInput from 'ink-text-input';
 import {
   addOption,
   archiveOption,
+  isSemesterLocked,
   LedgerValidationError,
   setActiveSemester,
   setDefaultOfficer,
+  setSemesterLocked,
   SourceConflictError,
   type LedgerOption,
   type LedgerSettings,
@@ -31,6 +33,7 @@ type Action =
   | 'add-semester'
   | 'add-officer'
   | 'add-category'
+  | 'semester-lock'
   | 'archive-semester'
   | 'archive-category'
   | 'archive-officer';
@@ -43,6 +46,7 @@ const actions: Array<{label: string; value: Action}> = [
   {label: '新增學期', value: 'add-semester'},
   {label: '新增經手人', value: 'add-officer'},
   {label: '新增分類', value: 'add-category'},
+  {label: '學期鎖定狀態', value: 'semester-lock'},
   {label: '封存學期', value: 'archive-semester'},
   {label: '封存分類', value: 'archive-category'},
   {label: '封存經手人', value: 'archive-officer'},
@@ -69,6 +73,15 @@ function validationMessage(
   const messages = error.issues.map((issue) => issue.message);
   if (messages.includes('Active semester cannot be archived')) {
     return '目前學期不可封存';
+  }
+  if (messages.includes('Active semester cannot be locked')) {
+    return '目前學期不可鎖定';
+  }
+  if (messages.includes('Locked semester cannot become active')) {
+    return '已鎖定學期不可設為目前學期';
+  }
+  if (messages.includes('Locked semester cannot be archived')) {
+    return '已鎖定學期不可封存，請先解鎖';
   }
   if (messages.includes('Default officer cannot be archived')) {
     return '預設經手人不可封存';
@@ -145,6 +158,13 @@ export function SettingsScreen({
         case 'semester':
           next = setActiveSemester(state, value);
           break;
+        case 'semester-lock':
+          next = setSemesterLocked(
+            state,
+            value,
+            !isSemesterLocked(state.settings, value),
+          );
+          break;
         case 'officer':
           next = setDefaultOfficer(state, value);
           break;
@@ -199,8 +219,12 @@ export function SettingsScreen({
     );
   } else {
     const options =
-      action === 'semester' || action === 'archive-semester'
-        ? activeOptions(state.settings.semesters)
+      action === 'semester'
+        ? activeOptions(state.settings.semesters).filter(
+            (option) => !isSemesterLocked(state.settings, option.value),
+          )
+        : action === 'semester-lock' || action === 'archive-semester'
+          ? activeOptions(state.settings.semesters)
         : action === 'officer' || action === 'archive-officer'
           ? activeOptions(state.settings.officers)
           : activeOptions(state.settings.categories);
@@ -209,7 +233,14 @@ export function SettingsScreen({
         key={action}
         isFocused={!pending}
         items={options.map((option) => ({
-          label: option.value,
+          label:
+            action === 'semester-lock'
+              ? `${option.value}（${
+                  isSemesterLocked(state.settings, option.value)
+                    ? '已鎖定'
+                    : '未鎖定'
+                }）`
+              : option.value,
           value: option.value,
         }))}
         onSelect={(item) => propose(item.value)}

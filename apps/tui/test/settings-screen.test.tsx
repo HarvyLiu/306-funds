@@ -110,7 +110,7 @@ describe('SettingsScreen', () => {
         expect(next.default_officer).toBe('另一位總務'),
     },
     {
-      action: '7',
+      action: '8',
       choice: '3',
       assertion: (next: LedgerSettings) =>
         expect(next.categories).toContainEqual({
@@ -378,9 +378,9 @@ describe('SettingsScreen', () => {
   });
 
   it.each([
-    {action: '6', choice: '1', reason: '目前學期不可封存'},
-    {action: '7', choice: '2', reason: '此分類已被交易引用，無法封存'},
-    {action: '8', choice: '1', reason: '預設經手人不可封存'},
+    {action: '7', choice: '1', reason: '目前學期不可封存'},
+    {action: '8', choice: '2', reason: '此分類已被交易引用，無法封存'},
+    {action: '9', choice: '1', reason: '預設經手人不可封存'},
   ])('shows a refusal reason without saving', async ({action, choice, reason}) => {
     const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
     const {lastFrame, stdin} = render(
@@ -395,6 +395,177 @@ describe('SettingsScreen', () => {
     await choose(stdin, choice);
     expect(lastFrame()).toContain(reason);
     expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('shows the semester lock action and active lock statuses', async () => {
+    const lockedSettings = structuredClone(settings);
+    lockedSettings.locked_semesters = ['第二學期'];
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: lockedSettings, transactions}}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    expect(lastFrame()).toContain('學期鎖定狀態');
+    await choose(stdin, '6');
+    expect(lastFrame()).toContain('第一學期（未鎖定）');
+    expect(lastFrame()).toContain('第二學期（已鎖定）');
+  });
+
+  it('locks a non-current semester and persists the next settings', async () => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '6');
+    await choose(stdin, '2');
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0]![0].locked_semesters).toEqual(['第二學期']);
+  });
+
+  it('unlocks a non-current locked semester and persists the next settings', async () => {
+    const lockedSettings = structuredClone(settings);
+    lockedSettings.locked_semesters = ['第二學期'];
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {stdin} = render(
+      <SettingsScreen
+        state={{settings: lockedSettings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '6');
+    await choose(stdin, '2');
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0]![0].locked_semesters).toEqual([]);
+  });
+
+  it('refuses to lock the current semester without saving', async () => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '6');
+    await choose(stdin, '1');
+    expect(lastFrame()).toContain('目前學期不可鎖定');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('omits locked active semesters from the current semester selector', async () => {
+    const lockedSettings = structuredClone(settings);
+    lockedSettings.locked_semesters = ['第二學期'];
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: lockedSettings, transactions}}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '1');
+    expect(lastFrame()).toContain('第一學期');
+    expect(lastFrame()).not.toContain('第二學期');
+  });
+
+  it('refuses to archive a locked semester without saving', async () => {
+    const lockedSettings = structuredClone(settings);
+    lockedSettings.locked_semesters = ['第二學期'];
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: lockedSettings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '7');
+    await choose(stdin, '2');
+    expect(lastFrame()).toContain('已鎖定學期不可封存，請先解鎖');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'source conflict',
+      error: new SourceConflictError('/private/settings.json'),
+      message: '檔案已被外部修改。請重新載入後再試。',
+    },
+    {
+      name: 'generic save failure',
+      error: new Error('permission denied'),
+      message: '無法儲存設定，請確認檔案權限後再試。',
+    },
+  ])('shows $name while saving a semester lock change', async ({error, message}) => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => {
+      throw error;
+    });
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '6');
+    await choose(stdin, '2');
+    await vi.waitFor(() => expect(lastFrame()).toContain(message));
+    expect(lastFrame()).not.toContain('設定已儲存');
+  });
+
+  it('prevents repeated semester lock selection while saving', async () => {
+    const pendingSave = deferred();
+    const onSave = vi.fn(() => pendingSave.promise);
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await choose(stdin, '6');
+    await choose(stdin, '2');
+    await vi.waitFor(() => expect(lastFrame()).toContain('正在儲存設定'));
+    await choose(stdin, '2');
+    expect(onSave).toHaveBeenCalledOnce();
+
+    pendingSave.resolve();
+    await vi.waitFor(() => expect(lastFrame()).toContain('設定已儲存'));
+  });
+
+  it('passes the saved lock settings to onSaved', async () => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const onSaved = vi.fn();
+    const {stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+
+    await choose(stdin, '6');
+    await choose(stdin, '2');
+    await vi.waitFor(() => expect(onSaved).toHaveBeenCalledOnce());
+    expect(onSaved).toHaveBeenCalledWith(
+      expect.objectContaining({locked_semesters: ['第二學期']}),
+    );
   });
 
   it('does not claim a save after a source conflict', async () => {
