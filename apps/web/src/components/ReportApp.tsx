@@ -1,4 +1,4 @@
-import {useMemo, useState} from 'react';
+import {useEffect, useMemo, useRef, useState} from 'react';
 
 import {
   calculateSemesterOpeningBalance,
@@ -6,10 +6,11 @@ import {
   emptyFilter,
   type LedgerFilter,
 } from '@class-fund/ledger/calculations';
+import {createReportAnalytics} from '@class-fund/ledger/analytics';
 import {formatTwd} from '@class-fund/ledger/format';
 
 import type {ReportPayload} from '../lib/load-report.js';
-import {ExpenseChart} from './ExpenseChart.js';
+import {AnalyticsDashboard} from './AnalyticsDashboard.js';
 
 interface ReportAppProps {
   payload: ReportPayload;
@@ -47,10 +48,19 @@ function uniqueValues(
 export function ReportApp({payload}: ReportAppProps) {
   const [filter, setFilter] = useState<LedgerFilter>(() => ({...emptyFilter}));
   const [dateOrder, setDateOrder] = useState<DateOrder>('newest');
+  const [highlightedTransaction, setHighlightedTransaction] = useState<
+    string | null
+  >(null);
+  const highlightTimer = useRef<number | undefined>(undefined);
 
   const view = useMemo(
     () => createLedgerView(payload.transactions, filter),
     [filter, payload.transactions],
+  );
+  const analytics = useMemo(
+    () =>
+      createReportAnalytics(payload.settings, payload.transactions, filter),
+    [filter, payload.settings, payload.transactions],
   );
   const rows = useMemo(
     () => (dateOrder === 'newest' ? view.rows : [...view.rows].reverse()),
@@ -101,6 +111,40 @@ export function ReportApp({payload}: ReportAppProps) {
     filter.handledBy !== null ||
     filter.type !== null ||
     filter.search.trim() !== '';
+
+  useEffect(
+    () => () => {
+      if (highlightTimer.current !== undefined) {
+        window.clearTimeout(highlightTimer.current);
+      }
+    },
+    [],
+  );
+
+  function focusTransaction(transactionId: string): void {
+    const row = document.getElementById(`transaction-${transactionId}`);
+    if (!(row instanceof HTMLTableRowElement)) {
+      return;
+    }
+
+    const reduceMotion = window.matchMedia(
+      '(prefers-reduced-motion: reduce)',
+    ).matches;
+    row.scrollIntoView({
+      block: 'center',
+      behavior: reduceMotion ? 'auto' : 'smooth',
+    });
+    row.focus({preventScroll: true});
+    setHighlightedTransaction(transactionId);
+
+    if (highlightTimer.current !== undefined) {
+      window.clearTimeout(highlightTimer.current);
+    }
+    highlightTimer.current = window.setTimeout(() => {
+      setHighlightedTransaction(null);
+      highlightTimer.current = undefined;
+    }, 1600);
+  }
 
   return (
     <main className="report-shell">
@@ -267,13 +311,10 @@ export function ReportApp({payload}: ReportAppProps) {
         </section>
       ) : null}
 
-      <section className="expense-chart" aria-labelledby="chart-title">
-        <div className="section-heading">
-          <h2 id="chart-title">分類支出</h2>
-          <span>{hasFilter ? '篩選範圍' : '全部交易'}</span>
-        </div>
-        <ExpenseChart values={view.expensesByCategory} />
-      </section>
+      <AnalyticsDashboard
+        analytics={analytics}
+        onSelectTransaction={focusTransaction}
+      />
 
       <section className="transactions" aria-labelledby="transactions-title">
         <div className="section-heading">
@@ -315,7 +356,16 @@ export function ReportApp({payload}: ReportAppProps) {
                 </tr>
               ) : (
                 rows.map(({transaction, runningBalance}) => (
-                  <tr key={transaction.id}>
+                  <tr
+                    key={transaction.id}
+                    id={`transaction-${transaction.id}`}
+                    tabIndex={-1}
+                    className={
+                      highlightedTransaction === transaction.id
+                        ? 'transaction-highlight'
+                        : undefined
+                    }
+                  >
                     <td>
                       <time dateTime={transaction.date}>
                         {formatTransactionDate(transaction.date)}

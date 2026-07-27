@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 
-import {formatTwd} from '../src/index.js';
+import {formatSignedTwd, formatTwd} from '../src/index.js';
 
 describe('formatTwd', () => {
   it.each([
@@ -22,4 +22,14 @@ describe('formatTwd', () => {
       expect(() => formatTwd(amount)).toThrow(RangeError);
     },
   );
+});
+
+describe('formatSignedTwd', () => {
+  it.each([
+    [1_200, '+NT$1,200'],
+    [-300, '-NT$300'],
+    [0, '+NT$0'],
+  ] as const)('formats %s with an explicit sign', (amount, expected) => {
+    expect(formatSignedTwd(amount)).toBe(expected);
+  });
 });

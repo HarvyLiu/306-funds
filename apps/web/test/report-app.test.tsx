@@ -4,26 +4,76 @@ import {
   type LedgerSettings,
   type Transaction,
 } from '@class-fund/ledger';
-import {render, screen, within} from '@testing-library/react';
+import type {
+  BalancePoint,
+  CategorySlice,
+  SemesterAnalytics,
+} from '@class-fund/ledger/analytics';
+import {act, fireEvent, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {describe, expect, it, vi} from 'vitest';
 
-vi.mock('chart.js', () => {
-  class Chart {
-    static register() {}
+vi.mock('../src/components/BalanceChart.js', () => ({
+  BalanceChart: ({points}: {points: BalancePoint[]}) =>
+    points.length === 0 ? (
+      <p>目前沒有餘額資料</p>
+    ) : (
+      <div role="img" aria-label="總餘額走勢圖">
+        {points.map((point) => (
+          <span
+            key={
+              point.kind === 'opening'
+                ? 'balance-opening'
+                : `balance-${point.transactionId}`
+            }
+            data-matches-filter={String(point.matchesFilter)}
+          >
+            {point.subject} {point.signedAmount ?? 'opening'} {point.balance}
+          </span>
+        ))}
+      </div>
+    ),
+}));
 
-    destroy() {}
-  }
+vi.mock('../src/components/CategoryDoughnut.js', () => ({
+  CategoryDoughnut: ({
+    kind,
+    slices,
+  }: {
+    kind: 'income' | 'expense';
+    slices: CategorySlice[];
+  }) =>
+    slices.length === 0 ? (
+      <p>{kind === 'income' ? '目前沒有收入資料' : '目前沒有支出資料'}</p>
+    ) : (
+      <div
+        role="img"
+        aria-label={kind === 'income' ? '分類收入比例圖' : '分類支出比例圖'}
+      >
+        {slices.map((slice) => (
+          <span key={slice.key} data-slice-key={slice.key}>
+            {slice.label} {slice.amount} {slice.count} {slice.percentage}
+          </span>
+        ))}
+      </div>
+    ),
+}));
 
-  return {
-    BarController: 'BarController',
-    BarElement: 'BarElement',
-    CategoryScale: 'CategoryScale',
-    Chart,
-    LinearScale: 'LinearScale',
-    Tooltip: 'Tooltip',
-  };
-});
+vi.mock('../src/components/SemesterComparisonChart.js', () => ({
+  SemesterComparisonChart: ({semesters}: {semesters: SemesterAnalytics[]}) =>
+    semesters.length === 0 ? (
+      <p>目前沒有學期資料</p>
+    ) : (
+      <div role="img" aria-label="各學期收支比較圖">
+        {semesters.map((semester) => (
+          <span key={semester.semester}>
+            {semester.semester} {semester.income} {semester.expenses}{' '}
+            {semester.openingBalance} {semester.endingBalance}
+          </span>
+        ))}
+      </div>
+    ),
+}));
 
 import {ReportApp} from '../src/components/ReportApp.js';
 import type {ReportPayload} from '../src/lib/load-report.js';
@@ -116,6 +166,36 @@ const secondSemesterPayload: ReportPayload = {
   }),
 };
 
+const printingLargestButtonName =
+  '2026-08-20 影印講義 教材與影印 -NT$300';
+const cleaningLargestButtonName =
+  '2026-08-20 教室清潔用品 清潔用品 -NT$700';
+
+function mockReducedMotion(matches: boolean): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    value: vi.fn().mockReturnValue({
+      matches,
+      media: '(prefers-reduced-motion: reduce)',
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    }),
+  });
+}
+
+function mockScrollIntoView() {
+  const scrollIntoView = vi.fn();
+  Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+    configurable: true,
+    value: scrollIntoView,
+  });
+  return scrollIntoView;
+}
+
 describe('ReportApp', () => {
   it('renders report identity, full-ledger summary, and update timestamp', () => {
     render(<ReportApp payload={payload} />);
@@ -150,7 +230,7 @@ describe('ReportApp', () => {
       expect(within(table).getByRole('columnheader', {name: heading})).toBeVisible();
     }
 
-    const printingRow = screen.getByText('影印講義').closest('tr');
+    const printingRow = document.getElementById('transaction-printing');
     expect(printingRow).not.toBeNull();
     expect(within(printingRow!).getByText('2026/8/20')).toBeVisible();
     expect(within(printingRow!).getByText('教材與影印')).toBeVisible();
@@ -158,7 +238,7 @@ describe('ReportApp', () => {
     expect(within(printingRow!).getByText('NT$300')).toBeVisible();
     expect(within(printingRow!).getByText('NT$4,000')).toBeVisible();
 
-    const cleaningRow = screen.getByText('教室清潔用品').closest('tr');
+    const cleaningRow = document.getElementById('transaction-cleaning');
     expect(cleaningRow).not.toBeNull();
     expect(within(cleaningRow!).getByText('NT$700')).toBeVisible();
     expect(within(cleaningRow!).getByText('NT$4,300')).toBeVisible();
@@ -253,7 +333,11 @@ describe('ReportApp', () => {
     expect(
       screen.getByRole('row', {name: '第二學期 期初結餘 NT$4,000'}),
     ).toBeVisible();
-    expect(screen.getByText('第二學期清潔用品')).toBeVisible();
+    expect(
+      within(screen.getByRole('table', {name: '班費交易明細'})).getByText(
+        '第二學期清潔用品',
+      ),
+    ).toBeVisible();
   });
 
   it('filters the report while preserving the full-ledger balance', async () => {
@@ -276,10 +360,32 @@ describe('ReportApp', () => {
     const table = screen.getByRole('table', {name: '班費交易明細'});
     expect(within(table).getByText('影印講義')).toBeVisible();
     expect(within(table).queryByText('教室清潔用品')).not.toBeInTheDocument();
-    const chartTotals = screen.getByRole('list', {name: '各分類支出金額'});
-    expect(within(chartTotals).getByText('教材與影印')).toBeVisible();
-    expect(within(chartTotals).getByText('NT$300')).toBeVisible();
-    expect(within(chartTotals).queryByText('清潔用品')).not.toBeInTheDocument();
+    const balance = screen.getByRole('region', {name: '總餘額走勢'});
+    expect(within(balance).getByText(/期初結餘/)).toBeVisible();
+    expect(within(balance).getByText(/期初班費/)).toBeVisible();
+    expect(within(balance).getByText(/教室清潔用品/)).toBeVisible();
+    expect(within(balance).getByText(/影印講義/)).toBeVisible();
+    expect(
+      balance.querySelector('[data-matches-filter="false"]'),
+    ).toBeInTheDocument();
+
+    const expenses = screen.getByRole('region', {name: '分類支出比例'});
+    expect(within(expenses).getByText(/教材與影印 300/)).toBeVisible();
+    expect(within(expenses).queryByText(/清潔用品/)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole('region', {name: '分類收入比例'}),
+    ).toHaveTextContent('目前沒有收入資料');
+
+    const comparison = screen.getByRole('region', {
+      name: '各學期收支比較',
+    });
+    expect(within(comparison).getByText('第一學期 0 300 0 4000')).toBeVisible();
+    expect(
+      screen.getByRole('button', {name: printingLargestButtonName}),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole('region', {name: '分類支出'}),
+    ).not.toBeInTheDocument();
   });
 
   it('searches notes, clears all controls, and reverses date order without changing balances', async () => {
@@ -313,11 +419,132 @@ describe('ReportApp', () => {
       .map((row) => row.querySelector('.subject')?.textContent);
     expect(subjects).toEqual(['期初班費', '教室清潔用品', '影印講義']);
 
-    const openingRow = screen.getByText('期初班費').closest('tr');
-    const cleaningRow = screen.getByText('教室清潔用品').closest('tr');
-    const printingRow = screen.getByText('影印講義').closest('tr');
+    const openingRow = document.getElementById('transaction-opening');
+    const cleaningRow = document.getElementById('transaction-cleaning');
+    const printingRow = document.getElementById('transaction-printing');
     expect(within(openingRow!).getAllByText('NT$5,000')).toHaveLength(2);
     expect(within(cleaningRow!).getByText('NT$4,300')).toBeVisible();
     expect(within(printingRow!).getByText('NT$4,000')).toBeVisible();
+  });
+
+  it('does not change analytics when only the transaction date order changes', async () => {
+    const user = userEvent.setup();
+    render(<ReportApp payload={payload} />);
+
+    const analyticsText = () =>
+      [
+        '總餘額走勢',
+        '分類支出比例',
+        '分類收入比例',
+        '各學期收支比較',
+        '主要收支變動',
+      ].map((name) => screen.getByRole('region', {name}).textContent);
+    const before = analyticsText();
+
+    await user.selectOptions(screen.getByLabelText('日期排序'), 'oldest');
+
+    expect(analyticsText()).toEqual(before);
+  });
+
+  it('keeps truthful analytics and empty states usable when no transaction matches', async () => {
+    const user = userEvent.setup();
+    render(<ReportApp payload={payload} />);
+
+    await user.type(
+      screen.getByRole('searchbox', {name: '搜尋項目與備註'}),
+      '完全不存在的交易',
+    );
+
+    expect(
+      screen.getByRole('region', {name: '分類支出比例'}),
+    ).toHaveTextContent('目前沒有支出資料');
+    expect(
+      screen.getByRole('region', {name: '分類收入比例'}),
+    ).toHaveTextContent('目前沒有收入資料');
+    expect(
+      screen.getByRole('region', {name: '主要收支變動'}),
+    ).toHaveTextContent('目前沒有符合條件的收支變動');
+    expect(
+      screen.getByRole('region', {name: '總餘額走勢'}),
+    ).toHaveTextContent('期初班費');
+    expect(
+      screen.getByRole('table', {name: '班費交易明細'}),
+    ).toHaveTextContent('沒有符合篩選條件的交易');
+  });
+
+  it('focuses and highlights a row from the largest list with smooth scrolling', async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = mockScrollIntoView();
+    mockReducedMotion(false);
+    render(<ReportApp payload={payload} />);
+
+    const button = screen.getByRole('button', {
+      name: printingLargestButtonName,
+    });
+    button.focus();
+    await user.keyboard('{Enter}');
+
+    const row = document.getElementById('transaction-printing');
+    expect(row).toHaveFocus();
+    expect(row).toHaveClass('transaction-highlight');
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: 'center',
+      behavior: 'smooth',
+    });
+  });
+
+  it('uses non-smooth row navigation when reduced motion is requested', async () => {
+    const user = userEvent.setup();
+    const scrollIntoView = mockScrollIntoView();
+    mockReducedMotion(true);
+    render(<ReportApp payload={payload} />);
+
+    await user.click(
+      screen.getByRole('button', {name: cleaningLargestButtonName}),
+    );
+
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: 'center',
+      behavior: 'auto',
+    });
+  });
+
+  it('replaces an active highlight timer and clears the replacement on unmount', () => {
+    vi.useFakeTimers();
+    const clearTimeout = vi.spyOn(window, 'clearTimeout');
+    mockScrollIntoView();
+    mockReducedMotion(false);
+    const {unmount} = render(<ReportApp payload={payload} />);
+    const printingButton = screen.getByRole('button', {
+      name: printingLargestButtonName,
+    });
+    const cleaningButton = screen.getByRole('button', {
+      name: cleaningLargestButtonName,
+    });
+    const printingRow = document.getElementById('transaction-printing');
+    const cleaningRow = document.getElementById('transaction-cleaning');
+
+    fireEvent.click(printingButton);
+    expect(printingRow).toHaveClass('transaction-highlight');
+    act(() => vi.advanceTimersByTime(1000));
+
+    fireEvent.click(cleaningButton);
+    expect(printingRow).not.toHaveClass('transaction-highlight');
+    expect(cleaningRow).toHaveClass('transaction-highlight');
+    expect(clearTimeout).toHaveBeenCalledOnce();
+
+    act(() => vi.advanceTimersByTime(600));
+    expect(cleaningRow).toHaveClass('transaction-highlight');
+    act(() => vi.advanceTimersByTime(999));
+    expect(cleaningRow).toHaveClass('transaction-highlight');
+    act(() => vi.advanceTimersByTime(1));
+    expect(cleaningRow).not.toHaveClass('transaction-highlight');
+
+    fireEvent.click(printingButton);
+    unmount();
+    expect(clearTimeout).toHaveBeenCalledTimes(2);
+
+    clearTimeout.mockRestore();
+    vi.useRealTimers();
   });
 });

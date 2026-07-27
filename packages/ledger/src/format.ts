@@ -12,3 +12,8 @@ export function formatTwd(amount: number): string {
   const sign = amount < 0 ? '-' : '';
   return `${sign}NT$${wholeNumberFormatter.format(Math.abs(amount))}`;
 }
+
+export function formatSignedTwd(amount: number): string {
+  const formatted = formatTwd(amount);
+  return amount >= 0 ? `+${formatted}` : formatted;
+}

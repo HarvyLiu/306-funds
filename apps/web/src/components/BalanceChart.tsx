@@ -1,5 +1,5 @@
 import type {BalancePoint} from '@class-fund/ledger/analytics';
-import {formatTwd} from '@class-fund/ledger/format';
+import {formatSignedTwd, formatTwd} from '@class-fund/ledger/format';
 import type {ChartConfiguration} from 'chart.js';
 import {useCallback, useEffect, useMemo, useState} from 'react';
 
@@ -34,12 +34,12 @@ function chartLabel(point: BalancePoint): string {
     : `${point.date ?? ''} ${point.subject}`.trim();
 }
 
-function formatSignedAmount(amount: number | null): string {
+function formatBalanceChange(amount: number | null): string {
   if (amount === null) {
     return '期初結餘';
   }
 
-  return amount >= 0 ? `+${formatTwd(amount)}` : formatTwd(amount);
+  return formatSignedTwd(amount);
 }
 
 function liveDetail(point: BalancePoint): string {
@@ -47,7 +47,7 @@ function liveDetail(point: BalancePoint): string {
     return `期初結餘，餘額 ${formatTwd(point.balance)}`;
   }
 
-  return `${chartLabel(point)} ${formatSignedAmount(point.signedAmount)}，餘額 ${formatTwd(point.balance)}`;
+  return `${chartLabel(point)} ${formatBalanceChange(point.signedAmount)}，餘額 ${formatTwd(point.balance)}`;
 }
 
 export function BalanceChart({points}: BalanceChartProps) {
@@ -94,7 +94,7 @@ export function BalanceChart({points}: BalanceChartProps) {
                 const point = points[item.dataIndex];
                 return point === undefined
                   ? ''
-                  : formatSignedAmount(point.signedAmount);
+                  : formatBalanceChange(point.signedAmount);
               },
               afterLabel: (item) => {
                 const point = points[item.dataIndex];
@@ -129,7 +129,7 @@ export function BalanceChart({points}: BalanceChartProps) {
     key: point.transactionId ?? 'opening',
     date: point.date ?? '—',
     subject: point.subject,
-    change: formatSignedAmount(point.signedAmount),
+    change: formatBalanceChange(point.signedAmount),
     balance: formatTwd(point.balance),
     filterMatch: point.matchesFilter
       ? '符合目前篩選'
