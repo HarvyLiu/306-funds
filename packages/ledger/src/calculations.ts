@@ -1,6 +1,7 @@
 import type {
   LedgerFilter,
   LedgerRow,
+  LedgerSettings,
   LedgerView,
   Totals,
   Transaction,
@@ -100,6 +101,30 @@ export function calculateTotals(
   }
 
   return {income, expenses, net: addSafeInteger(income, -expenses)};
+}
+
+export function calculateSemesterOpeningBalance(
+  settings: LedgerSettings,
+  transactions: readonly Transaction[],
+  semester: string,
+): number {
+  const semesterIndex = settings.semesters.findIndex(
+    (candidate) => candidate.value === semester,
+  );
+
+  if (semesterIndex < 0) {
+    throw new RangeError('Semester is not configured');
+  }
+
+  const earlierSemesters = new Set(
+    settings.semesters.slice(0, semesterIndex).map(({value}) => value),
+  );
+
+  return calculateTotals(
+    transactions.filter((transaction) =>
+      earlierSemesters.has(transaction.semester),
+    ),
+  ).net;
 }
 
 export function matchesFilter(

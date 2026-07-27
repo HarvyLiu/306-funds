@@ -2,12 +2,14 @@ import {describe, expect, it} from 'vitest';
 
 import {
   buildLedgerRows,
+  calculateSemesterOpeningBalance,
   calculateTotals,
   createLedgerView,
   emptyFilter,
   matchesFilter,
   orderTransactions,
   type LedgerFilter,
+  type LedgerSettings,
   type Totals,
   type Transaction,
 } from '../src/index.js';
@@ -92,6 +94,31 @@ function expectSafeIntegerRangeError(run: () => unknown): void {
   }
 
   throw new Error('Expected ledger calculation to reject an unsafe integer');
+}
+
+const semesterOpeningSettings: LedgerSettings = {
+  schema_version: 2,
+  currency: 'TWD',
+  active_semester: '秋季學期',
+  default_officer: '我',
+  locked_semesters: [],
+  semesters: [
+    {value: '夏季學期', status: 'archived'},
+    {value: '秋季學期', status: 'active'},
+    {value: '春季學期', status: 'archived'},
+  ],
+  categories: [],
+  officers: [],
+};
+
+function openingTransaction(
+  id: string,
+  semester: string,
+  type: Transaction['type'],
+  amount: number,
+  date: string,
+): Transaction {
+  return transactionWith(id, {semester, type, amount, date});
 }
 
 describe('ledger chronology and running balances', () => {
@@ -251,6 +278,129 @@ describe('totals', () => {
     expectSafeIntegerRangeError(() =>
       createLedgerView([...input].reverse(), emptyFilter),
     );
+  });
+});
+
+describe('semester opening balances', () => {
+  it('uses configured semester order rather than transaction input order or dates', () => {
+    const input = [
+      openingTransaction('spring', '春季學期', 'expense', 20, '2020-01-01'),
+      openingTransaction('autumn', '秋季學期', 'income', 100, '2019-01-01'),
+      openingTransaction('summer', '夏季學期', 'expense', 30, '2030-01-01'),
+    ];
+
+    expect(
+      calculateSemesterOpeningBalance(semesterOpeningSettings, input, '夏季學期'),
+    ).toBe(0);
+    expect(
+      calculateSemesterOpeningBalance(semesterOpeningSettings, input, '秋季學期'),
+    ).toBe(-30);
+    expect(
+      calculateSemesterOpeningBalance(semesterOpeningSettings, input, '春季學期'),
+    ).toBe(70);
+  });
+
+  it('recalculates from the current earlier transaction amounts', () => {
+    const input = [
+      openingTransaction('summer', '夏季學期', 'income', 100, '2026-07-01'),
+    ];
+
+    expect(
+      calculateSemesterOpeningBalance(semesterOpeningSettings, input, '秋季學期'),
+    ).toBe(100);
+
+    input[0]!.amount = 40;
+
+    expect(
+      calculateSemesterOpeningBalance(semesterOpeningSettings, input, '秋季學期'),
+    ).toBe(40);
+  });
+
+  it.each([
+    {
+      name: 'a positive carryover',
+      input: [
+        openingTransaction(
+          'summer-income',
+          '夏季學期',
+          'income',
+          50,
+          '2026-07-01',
+        ),
+      ],
+      expected: 50,
+    },
+    {name: 'a zero carryover', input: [], expected: 0},
+    {
+      name: 'a negative carryover',
+      input: [
+        openingTransaction(
+          'summer-expense',
+          '夏季學期',
+          'expense',
+          50,
+          '2026-07-01',
+        ),
+      ],
+      expected: -50,
+    },
+  ])('returns $name', ({input, expected}) => {
+    expect(
+      calculateSemesterOpeningBalance(
+        semesterOpeningSettings,
+        input,
+        '秋季學期',
+      ),
+    ).toBe(expected);
+  });
+
+  it('rejects an unconfigured target semester', () => {
+    expect(() =>
+      calculateSemesterOpeningBalance(
+        semesterOpeningSettings,
+        [],
+        '不存在的學期',
+      ),
+    ).toThrow(new RangeError('Semester is not configured'));
+  });
+
+  it('rejects an unsafe aggregate from an earlier semester', () => {
+    expectSafeIntegerRangeError(() =>
+      calculateSemesterOpeningBalance(
+        semesterOpeningSettings,
+        unsafeTransactions('income').map((transaction) => ({
+          ...transaction,
+          semester: '夏季學期',
+        })),
+        '秋季學期',
+      ),
+    );
+  });
+
+  it('does not mutate settings, transactions, or transaction objects', () => {
+    const settings = structuredClone(semesterOpeningSettings);
+    const input = [
+      openingTransaction('summer', '夏季學期', 'income', 100, '2026-07-01'),
+    ];
+    const settingsBefore = structuredClone(settings);
+    const inputBefore = structuredClone(input);
+
+    calculateSemesterOpeningBalance(settings, input, '秋季學期');
+
+    expect(settings).toEqual(settingsBefore);
+    expect(input).toEqual(inputBefore);
+  });
+
+  it('does not change ledger views', () => {
+    const input = [
+      openingTransaction('summer', '夏季學期', 'income', 100, '2026-07-01'),
+      openingTransaction('autumn', '秋季學期', 'expense', 20, '2026-08-01'),
+    ];
+    const before = createLedgerView(input, emptyFilter);
+
+    calculateSemesterOpeningBalance(semesterOpeningSettings, input, '秋季學期');
+
+    expect(createLedgerView(input, emptyFilter)).toEqual(before);
   });
 });
 
