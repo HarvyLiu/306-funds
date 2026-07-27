@@ -74,6 +74,10 @@ const transactions: Transaction[] = [
 ];
 
 const roots: string[] = [];
+const repositoryFixtureRoot = join(
+  process.cwd(),
+  'test/fixtures/repo',
+);
 
 afterEach(async () => {
   await Promise.all(
@@ -99,6 +103,21 @@ async function createFixture(): Promise<string> {
 }
 
 describe('loadReport', () => {
+  it('migrates the checked-in v1 settings fixture without editing its source', async () => {
+    const settingsPath = join(repositoryFixtureRoot, 'data/settings.json');
+    const sourceBefore = await fs.readFile(settingsPath, 'utf8');
+
+    expect(JSON.parse(sourceBefore)).toMatchObject({schema_version: 1});
+
+    const payload = await loadReport(repositoryFixtureRoot);
+
+    expect(payload.settings).toMatchObject({
+      schema_version: 2,
+      locked_semesters: [],
+    });
+    await expect(fs.readFile(settingsPath, 'utf8')).resolves.toBe(sourceBefore);
+  });
+
   it('loads validated source data and builds the initial full-ledger view', async () => {
     const root = await createFixture();
 

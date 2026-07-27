@@ -7,6 +7,12 @@
   --income: #13795b;
   --expense: #b42318;
   --focus: #9a6700;
+  --carryover-border: #2f77b5;
+  --carryover-divider: #b8cce4;
+  --carryover-background: #edf4fb;
+  --carryover-label: #175a96;
+  --carryover-helper: #3f6180;
+  --carryover-balance: var(--carryover-label);
   --content: 1180px;
   color: var(--ink);
   background: var(--paper);
@@ -321,6 +327,36 @@ td time,
   padding-block: 32px;
   color: var(--muted);
   text-align: center;
+}
+
+.semester-opening td {
+  border-bottom-color: var(--carryover-divider);
+  background: var(--carryover-background);
+  color: var(--carryover-label);
+}
+
+.semester-opening td:first-child {
+  border-left: 4px solid var(--carryover-border);
+}
+
+.semester-opening strong,
+.semester-opening span {
+  display: block;
+}
+
+.semester-opening strong {
+  font-weight: 700;
+}
+
+.semester-opening span {
+  margin-top: 3px;
+  color: var(--carryover-helper);
+  font-size: 0.8125rem;
+}
+
+.semester-opening .amount-column {
+  color: var(--carryover-balance);
+  font-weight: 700;
 }
 
 @media (max-width: 900px) {

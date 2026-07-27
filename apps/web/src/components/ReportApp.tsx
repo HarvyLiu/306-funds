@@ -1,6 +1,7 @@
 import {useMemo, useState} from 'react';
 
 import {
+  calculateSemesterOpeningBalance,
   createLedgerView,
   emptyFilter,
   type LedgerFilter,
@@ -55,6 +56,21 @@ export function ReportApp({payload}: ReportAppProps) {
     () => (dateOrder === 'newest' ? view.rows : [...view.rows].reverse()),
     [dateOrder, view.rows],
   );
+  const semesterOpening = useMemo(() => {
+    const semester = filter.semester;
+    if (
+      semester === null ||
+      !payload.settings.semesters.some(({value}) => value === semester)
+    ) {
+      return null;
+    }
+
+    return calculateSemesterOpeningBalance(
+      payload.settings,
+      payload.transactions,
+      semester,
+    );
+  }, [filter.semester, payload.settings, payload.transactions]);
   const semesterOptions = useMemo(
     () =>
       uniqueValues(
@@ -278,6 +294,19 @@ export function ReportApp({payload}: ReportAppProps) {
               </tr>
             </thead>
             <tbody>
+              {filter.semester !== null && semesterOpening !== null ? (
+                <tr
+                  className="semester-opening"
+                  aria-label={`${filter.semester} 期初結餘 ${formatTwd(semesterOpening)}`}
+                >
+                  <td colSpan={5}>
+                    <strong>期初結餘</strong>
+                    <span>本學期開始前的累計餘額</span>
+                  </td>
+                  <td aria-hidden="true" />
+                  <td className="amount-column">{formatTwd(semesterOpening)}</td>
+                </tr>
+              ) : null}
               {rows.length === 0 ? (
                 <tr>
                   <td colSpan={7} className="empty-row">

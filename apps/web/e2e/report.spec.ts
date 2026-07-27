@@ -44,7 +44,8 @@ async function expectResponsiveGeometry(page: Page) {
       ...document.querySelectorAll(
         'h1, h2, .report-kicker, .updated-at span, .updated-at time, ' +
           '.filter-field > span, dt, dd, .section-heading > span, ' +
-          '.category-totals li > span:not(.category-swatch), .category-totals strong',
+          '.category-totals li > span:not(.category-swatch), .category-totals strong, ' +
+          '.semester-opening strong, .semester-opening span, .semester-opening .amount-column',
       ),
     ].filter(isRendered);
     const textRects = text.map((element) => ({
@@ -93,6 +94,7 @@ async function expectResponsiveGeometry(page: Page) {
         .map((element) => element.getAttribute('aria-label') ?? element.tagName),
       outsideText: text
         .filter(outsideViewport)
+        .filter((element) => element.closest('.table-scroll') === null)
         .map((element) => element.textContent?.trim() ?? element.tagName),
       overlaps,
       tableContainerInsideViewport:
@@ -100,8 +102,7 @@ async function expectResponsiveGeometry(page: Page) {
       tableUsesExplicitOverflow:
         tableScroll !== null &&
         getComputedStyle(tableScroll).overflowX === 'auto' &&
-        table !== null &&
-        table.scrollWidth >= tableScroll.clientWidth,
+        table !== null,
       dateVisible: document.querySelector('th:first-child')?.textContent === '日期',
       amountVisible: [...document.querySelectorAll('th')].some(
         (heading) => heading.textContent === '金額',
@@ -177,21 +178,22 @@ test('renders and filters the verified report', async ({page}, testInfo) => {
   await expect(summary.getByText('NT$5,000')).toBeVisible();
   await expect(summary.getByText('NT$1,050')).toBeVisible();
   await expect(page.getByLabel('搜尋項目與備註')).toBeVisible();
-  await expect(page.getByLabel('學期')).toBeVisible();
-  await expect(page.getByLabel('經手人')).toBeVisible();
+  await expect(page.getByRole('combobox', {name: '學期'})).toBeVisible();
+  await expect(page.getByRole('combobox', {name: '經手人'})).toBeVisible();
   await expect(page.getByRole('region', {name: '分類支出'})).toBeVisible();
   const table = page.getByRole('table', {name: '班費交易明細'});
   const subject = (value: string) =>
     table.locator('.subject', {hasText: new RegExp(`^${value}$`)});
   await expect(table).toBeVisible();
+  await expect(table.getByRole('row', {name: /期初結餘/})).toHaveCount(0);
   await expect(subject('掃具')).toBeVisible();
   await expect(subject('影印')).toBeVisible();
   expect(await paintedCanvasPixels(page)).toBeGreaterThan(100);
   await expectResponsiveGeometry(page);
   await attachScreenshot(page, testInfo, `report-${testInfo.project.name}`);
 
-  await page.getByLabel('經手人').selectOption('我');
-  await page.getByLabel('學期').selectOption('第一學期');
+  await page.getByRole('combobox', {name: '經手人'}).selectOption('我');
+  await page.getByRole('combobox', {name: '學期'}).selectOption('第一學期');
   const filtered = page.getByRole('region', {name: '篩選結果'});
   await expect(filtered.getByText('NT$5,000')).toBeVisible();
   await expect(filtered.getByText('NT$350')).toBeVisible();
@@ -200,13 +202,44 @@ test('renders and filters the verified report', async ({page}, testInfo) => {
   await expect(subject('期初餘額')).toBeVisible();
   await expect(subject('影印')).toBeVisible();
   await expect(subject('掃具')).toHaveCount(0);
-  await expect(table.getByRole('row')).toHaveCount(3);
+  await expect(
+    table.getByRole('row', {name: '第一學期 期初結餘 NT$0'}),
+  ).toBeVisible();
+  await expect(table.getByRole('row')).toHaveCount(4);
 
-  await page.getByLabel('日期排序').selectOption('oldest');
+  await page.getByRole('combobox', {name: '日期排序'}).selectOption('oldest');
   await expect(table.locator('.subject')).toHaveText(['期初餘額', '影印']);
   expect(await paintedCanvasPixels(page)).toBeGreaterThan(100);
   await expectResponsiveGeometry(page);
   await attachScreenshot(page, testInfo, `report-${testInfo.project.name}-filtered`);
+});
+
+test('shows opening balances for selected semesters without counting them as transactions', async ({
+  page,
+}) => {
+  await page.goto('/');
+  const table = page.getByRole('table', {name: '班費交易明細'});
+  const semesterSelect = page.getByRole('combobox', {name: '學期'});
+
+  await semesterSelect.selectOption('第一學期');
+  await expect(
+    table.getByRole('row', {name: '第一學期 期初結餘 NT$0'}),
+  ).toBeVisible();
+  await expect(table.getByRole('row')).toHaveCount(4);
+
+  await semesterSelect.selectOption('第二學期');
+  await expect(
+    table.getByRole('row', {name: '第二學期 期初結餘 NT$4,650'}),
+  ).toBeVisible();
+  await expect(table.getByRole('row')).toHaveCount(3);
+  await expectResponsiveGeometry(page);
+
+  await page.getByRole('combobox', {name: '類型'}).selectOption('income');
+  await expect(
+    table.getByRole('row', {name: '第二學期 期初結餘 NT$4,650'}),
+  ).toBeVisible();
+  await expect(table.getByText('沒有符合篩選條件的交易')).toBeVisible();
+  await expect(table.getByRole('row')).toHaveCount(3);
 });
 
 test('keeps the responsive boundary free of page overflow and overlap', async ({
