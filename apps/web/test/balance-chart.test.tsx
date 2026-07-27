@@ -130,6 +130,7 @@ describe('BalanceChart', () => {
     const canvas = screen.getByRole('img', {name: '總餘額走勢圖'});
     expect(canvas).toBeVisible();
     expect(canvas).not.toHaveAttribute('aria-hidden');
+    expect(canvas.parentElement).toHaveClass('chart-stage-balance');
 
     const configuration = capturedConfiguration();
     expect(configuration.options).toMatchObject({

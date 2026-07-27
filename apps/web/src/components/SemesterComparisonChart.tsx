@@ -136,7 +136,7 @@ export function SemesterComparisonChart({
       {semesters.length === 0 ? (
         <p className="analytics-empty">目前沒有學期資料</p>
       ) : (
-        <div className="chart-stage">
+        <div className="chart-stage chart-stage-semesters">
           <canvas
             ref={canvasRef}
             role="img"

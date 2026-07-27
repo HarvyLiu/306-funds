@@ -84,7 +84,10 @@ interface DoughnutConfiguration {
     maintainAspectRatio: boolean;
     responsive: boolean;
     plugins: {
-      legend: {position: string};
+      legend: {
+        position: string;
+        labels: {boxWidth: number; boxHeight: number};
+      };
       tooltip: {
         callbacks: {
           label: (item: {dataIndex: number}) => string;
@@ -126,6 +129,7 @@ describe('CategoryDoughnut', () => {
       const canvas = screen.getByRole('img', {name: canvasLabel});
       expect(canvas).toBeVisible();
       expect(canvas).not.toHaveAttribute('aria-hidden');
+      expect(canvas.parentElement).toHaveClass('chart-stage-doughnut');
       const configuration = capturedConfiguration();
       expect(configuration).toMatchObject({
         type: 'doughnut',
@@ -143,7 +147,12 @@ describe('CategoryDoughnut', () => {
           cutout: '62%',
           maintainAspectRatio: false,
           responsive: true,
-          plugins: {legend: {position: 'bottom'}},
+          plugins: {
+            legend: {
+              position: 'bottom',
+              labels: {boxWidth: 10, boxHeight: 10},
+            },
+          },
         },
       });
       expect(

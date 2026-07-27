@@ -142,7 +142,7 @@ export function BalanceChart({points}: BalanceChartProps) {
         <p className="analytics-empty">目前沒有餘額資料</p>
       ) : (
         <>
-          <div className="chart-stage">
+          <div className="chart-stage chart-stage-balance">
             <canvas
               ref={canvasRef}
               role="img"

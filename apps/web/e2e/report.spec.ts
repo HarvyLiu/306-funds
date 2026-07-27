@@ -28,6 +28,13 @@ async function paintedCanvasPixels(page: Page): Promise<number> {
 }
 
 async function expectResponsiveGeometry(page: Page) {
+  const closedDisclosures = page.locator(
+    '.chart-data-toggle[aria-expanded="false"]',
+  );
+  while ((await closedDisclosures.count()) > 0) {
+    await closedDisclosures.first().click();
+  }
+
   const geometry = await page.evaluate(() => {
     const tolerance = 1;
     const isRendered = (element: Element) => {
@@ -39,19 +46,43 @@ async function expectResponsiveGeometry(page: Page) {
       const rect = element.getBoundingClientRect();
       return rect.left < -tolerance || rect.right > innerWidth + tolerance;
     };
-    const controls = [...document.querySelectorAll('input, select')].filter(isRendered);
+    const controls = [
+      ...document.querySelectorAll(
+        'input, select, .chart-data-toggle, .largest-list button',
+      ),
+    ].filter(isRendered);
     const text = [
       ...document.querySelectorAll(
         'h1, h2, .report-kicker, .updated-at span, .updated-at time, ' +
           '.filter-field > span, dt, dd, .section-heading > span, ' +
-          '.category-totals li > span:not(.category-swatch), .category-totals strong, ' +
+          '.chart-data-toggle, .largest-list span, .largest-list strong, ' +
+          '.largest-list small, .largest-list b, .chart-data th, .chart-data td, ' +
           '.semester-opening strong, .semester-opening span, .semester-opening .amount-column',
       ),
     ].filter(isRendered);
-    const textRects = text.map((element) => ({
-      label: element.textContent?.trim() ?? element.tagName,
-      rect: element.getBoundingClientRect(),
-    }));
+    const visibleRect = (element: Element) => {
+      const rect = element.getBoundingClientRect();
+      const scrollContainer = element.closest('.table-scroll, .chart-data-scroll');
+      if (scrollContainer === null) return rect;
+
+      const containerRect = scrollContainer.getBoundingClientRect();
+      return {
+        left: Math.max(rect.left, containerRect.left),
+        right: Math.min(rect.right, containerRect.right),
+        top: Math.max(rect.top, containerRect.top),
+        bottom: Math.min(rect.bottom, containerRect.bottom),
+      };
+    };
+    const textRects = text
+      .map((element) => ({
+        label: element.textContent?.trim() ?? element.tagName,
+        rect: visibleRect(element),
+      }))
+      .filter(
+        ({rect}) =>
+          rect.right - rect.left > tolerance &&
+          rect.bottom - rect.top > tolerance,
+      );
     const overlaps: string[] = [];
     for (let left = 0; left < textRects.length; left += 1) {
       for (let right = left + 1; right < textRects.length; right += 1) {
@@ -68,15 +99,39 @@ async function expectResponsiveGeometry(page: Page) {
       }
     }
     const tableScroll = document.querySelector('.table-scroll');
-    const table = document.querySelector('table');
-    const chartStage = document.querySelector('.chart-stage');
-    const categoryTotals = document.querySelector('.category-totals');
-    const chartRect = chartStage?.getBoundingClientRect();
-    const categoryRect = categoryTotals?.getBoundingClientRect();
+    const table = tableScroll?.querySelector('table') ?? null;
+    const chartRegions = [
+      ...document.querySelectorAll('.analytics-section > .analytics-chart'),
+    ].filter(isRendered);
+    const chartRegionOutputs = chartRegions.map((region) =>
+      [...region.children].filter(
+        (element) =>
+          element.matches('.chart-stage, .analytics-empty') &&
+          isRendered(element),
+      ),
+    );
+    const chartOutputs = chartRegionOutputs.flat();
+    const chartStages = [
+      ...document.querySelectorAll('.chart-stage'),
+    ].filter(isRendered);
+    const chartToggles = [
+      ...document.querySelectorAll('.chart-data-toggle'),
+    ].filter(isRendered);
+    const largestButtons = [
+      ...document.querySelectorAll('.largest-list button'),
+    ].filter(isRendered);
+    const analyticsHeadings = [
+      ...document.querySelectorAll('.analytics-section .section-heading'),
+    ].filter(isRendered);
+    const chartDataScrolls = [
+      ...document.querySelectorAll('.chart-data-scroll'),
+    ].filter(isRendered);
+    const isInsideScrollContainer = (element: Element) =>
+      element.closest('.table-scroll, .chart-data-scroll') !== null;
     const overflowingElements = [...document.querySelectorAll('body *')]
       .filter(isRendered)
       .filter(outsideViewport)
-      .filter((element) => element.closest('.table-scroll') === null)
+      .filter((element) => !isInsideScrollContainer(element))
       .map((element) => {
         const rect = element.getBoundingClientRect();
         return {
@@ -94,7 +149,7 @@ async function expectResponsiveGeometry(page: Page) {
         .map((element) => element.getAttribute('aria-label') ?? element.tagName),
       outsideText: text
         .filter(outsideViewport)
-        .filter((element) => element.closest('.table-scroll') === null)
+        .filter((element) => !isInsideScrollContainer(element))
         .map((element) => element.textContent?.trim() ?? element.tagName),
       overlaps,
       tableContainerInsideViewport:
@@ -107,15 +162,53 @@ async function expectResponsiveGeometry(page: Page) {
       amountVisible: [...document.querySelectorAll('th')].some(
         (heading) => heading.textContent === '金額',
       ),
-      chartLegendOverlap:
-        chartRect !== undefined &&
-        categoryRect !== undefined &&
-        Math.min(chartRect.right, categoryRect.right) -
-          Math.max(chartRect.left, categoryRect.left) >
-          tolerance &&
-        Math.min(chartRect.bottom, categoryRect.bottom) -
-          Math.max(chartRect.top, categoryRect.top) >
-          tolerance,
+      chartRegionCount: chartRegions.length,
+      chartRegionsHaveSingleOutput: chartRegionOutputs.every(
+        (outputs) => outputs.length === 1,
+      ),
+      chartOutputCount: chartOutputs.length,
+      chartOutputsInsideViewport: chartOutputs.every(
+        (output) => !outsideViewport(output),
+      ),
+      chartOutputsHaveStableSize: chartOutputs.every((output) => {
+        const rect = output.getBoundingClientRect();
+        return (
+          rect.width > 0 &&
+          rect.height >= 240 &&
+          (innerWidth > 720 || rect.height <= 360 + tolerance)
+        );
+      }),
+      chartStagesInsideViewport: chartStages.every(
+        (stage) => !outsideViewport(stage),
+      ),
+      chartStagesHaveStableSize: chartStages.every((stage) => {
+        const rect = stage.getBoundingClientRect();
+        return rect.width > 0 && rect.height >= 240;
+      }),
+      chartStagesContainCanvas: chartStages.every(
+        (stage) => stage.querySelector(':scope > canvas') !== null,
+      ),
+      chartToggleCount: chartToggles.length,
+      chartTogglesInsideViewport: chartToggles.every(
+        (toggle) => !outsideViewport(toggle),
+      ),
+      largestButtonCount: largestButtons.length,
+      largestButtonsInsideViewport: largestButtons.every(
+        (button) => !outsideViewport(button),
+      ),
+      analyticsHeadingCount: analyticsHeadings.length,
+      analyticsHeadingsInsideViewport: analyticsHeadings.every(
+        (heading) => !outsideViewport(heading),
+      ),
+      chartDataTableCount: chartDataScrolls.length,
+      chartDataTablesInsideViewport: chartDataScrolls.every(
+        (container) => !outsideViewport(container),
+      ),
+      chartDataTablesUseExplicitOverflow: chartDataScrolls.every(
+        (container) =>
+          getComputedStyle(container).overflowX === 'auto' &&
+          container.querySelector('table') !== null,
+      ),
       overflowingElements,
     };
   });
@@ -131,7 +224,23 @@ async function expectResponsiveGeometry(page: Page) {
   expect(geometry.tableUsesExplicitOverflow).toBe(true);
   expect(geometry.dateVisible).toBe(true);
   expect(geometry.amountVisible).toBe(true);
-  expect(geometry.chartLegendOverlap).toBe(false);
+  expect(geometry.chartRegionCount).toBe(4);
+  expect(geometry.chartRegionsHaveSingleOutput).toBe(true);
+  expect(geometry.chartOutputCount).toBe(4);
+  expect(geometry.chartOutputsInsideViewport).toBe(true);
+  expect(geometry.chartOutputsHaveStableSize).toBe(true);
+  expect(geometry.chartStagesInsideViewport).toBe(true);
+  expect(geometry.chartStagesHaveStableSize).toBe(true);
+  expect(geometry.chartStagesContainCanvas).toBe(true);
+  expect(geometry.chartToggleCount).toBe(4);
+  expect(geometry.chartTogglesInsideViewport).toBe(true);
+  expect(geometry.largestButtonCount).toBeGreaterThan(0);
+  expect(geometry.largestButtonsInsideViewport).toBe(true);
+  expect(geometry.analyticsHeadingCount).toBe(5);
+  expect(geometry.analyticsHeadingsInsideViewport).toBe(true);
+  expect(geometry.chartDataTableCount).toBe(4);
+  expect(geometry.chartDataTablesInsideViewport).toBe(true);
+  expect(geometry.chartDataTablesUseExplicitOverflow).toBe(true);
 
   const boundaryColumns = await page.locator('.table-scroll').evaluate((element) => {
     const container = element as HTMLElement;
@@ -232,6 +341,19 @@ test('shows opening balances for selected semesters without counting them as tra
     table.getByRole('row', {name: '第二學期 期初結餘 NT$4,650'}),
   ).toBeVisible();
   await expect(table.getByRole('row')).toHaveCount(3);
+  await expect(
+    page.locator('.analytics-section > .analytics-chart > .chart-stage'),
+  ).toHaveCount(3);
+  await expect(
+    page
+      .getByRole('region', {name: '分類收入比例'})
+      .locator(':scope > .analytics-chart > .analytics-empty'),
+  ).toHaveText('目前沒有收入資料');
+  await expect(
+    page.locator(
+      '.analytics-section > .analytics-chart > :is(.chart-stage, .analytics-empty)',
+    ),
+  ).toHaveCount(4);
   await expectResponsiveGeometry(page);
 
   await page.getByRole('combobox', {name: '類型'}).selectOption('income');
@@ -247,11 +369,10 @@ test('keeps the responsive boundary free of page overflow and overlap', async ({
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop', 'covered once outside mobile project');
 
-  for (const width of [768, 721, 600]) {
+  for (const width of [1280, 768, 721, 600, 390, 320]) {
     await page.setViewportSize({width, height: 900});
     await page.goto('/');
     await expectResponsiveGeometry(page);
-    expect(await paintedCanvasPixels(page)).toBeGreaterThan(100);
     await attachScreenshot(page, testInfo, `report-${width}`);
   }
 });

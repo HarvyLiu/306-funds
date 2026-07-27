@@ -125,6 +125,7 @@ describe('SemesterComparisonChart', () => {
     const canvas = screen.getByRole('img', {name: '各學期收支比較圖'});
     expect(canvas).toBeVisible();
     expect(canvas).not.toHaveAttribute('aria-hidden');
+    expect(canvas.parentElement).toHaveClass('chart-stage-semesters');
     const configuration = capturedConfiguration();
     expect(configuration.type).toBe('bar');
     expect(configuration.data.labels).toEqual(['第一學期', '第二學期']);

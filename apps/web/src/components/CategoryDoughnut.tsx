@@ -52,7 +52,10 @@ export function CategoryDoughnut({kind, slices}: CategoryDoughnutProps) {
         maintainAspectRatio: false,
         responsive: true,
         plugins: {
-          legend: {position: 'bottom'},
+          legend: {
+            position: 'bottom',
+            labels: {boxWidth: 10, boxHeight: 10},
+          },
           tooltip: {
             callbacks: {
               label: (item) => {
@@ -92,7 +95,7 @@ export function CategoryDoughnut({kind, slices}: CategoryDoughnutProps) {
           {isIncome ? '目前沒有收入資料' : '目前沒有支出資料'}
         </p>
       ) : (
-        <div className="chart-stage">
+        <div className="chart-stage chart-stage-doughnut">
           <canvas
             ref={canvasRef}
             role="img"
