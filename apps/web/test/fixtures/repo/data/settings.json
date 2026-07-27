@@ -9,8 +9,15 @@
   ],
   "categories": [
     {"value": "期初餘額", "status": "active"},
+    {"value": "班費收入", "status": "active"},
+    {"value": "義賣收入", "status": "active"},
     {"value": "教材與影印", "status": "active"},
-    {"value": "清潔用品", "status": "active"}
+    {"value": "清潔用品", "status": "active"},
+    {"value": "活動用品", "status": "active"},
+    {"value": "文具用品", "status": "active"},
+    {"value": "獎品", "status": "active"},
+    {"value": "交通用品", "status": "active"},
+    {"value": "餐飲用品", "status": "active"}
   ],
   "officers": [
     {"value": "我", "status": "active"},

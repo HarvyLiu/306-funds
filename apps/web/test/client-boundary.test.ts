@@ -15,6 +15,7 @@ describe('report client dependency boundary', () => {
         write: false,
         rollupOptions: {
           input: resolve('src/components/ReportApp.tsx'),
+          preserveEntrySignatures: 'strict',
         },
       },
     });
@@ -33,5 +34,15 @@ describe('report client dependency boundary', () => {
     expect(clientCode).not.toContain('ZodError');
     expect(clientCode).not.toContain('Buffer size must be');
     expect(clientCode).not.toContain('CSV header must match canonical order');
+    expect(clientCode).not.toContain('node:fs');
+    expect(clientCode).not.toContain('node:path');
+    for (const chartName of [
+      '總餘額走勢圖',
+      '分類支出比例圖',
+      '分類收入比例圖',
+      '各學期收支比較圖',
+    ]) {
+      expect(clientCode).toContain(chartName);
+    }
   });
 });

@@ -5,35 +5,49 @@ import {
   type Transaction,
 } from '@class-fund/ledger';
 import type {
-  BalancePoint,
   CategorySlice,
   SemesterAnalytics,
 } from '@class-fund/ledger/analytics';
 import {act, fireEvent, render, screen, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
-vi.mock('../src/components/BalanceChart.js', () => ({
-  BalanceChart: ({points}: {points: BalancePoint[]}) =>
-    points.length === 0 ? (
-      <p>目前沒有餘額資料</p>
-    ) : (
-      <div role="img" aria-label="總餘額走勢圖">
-        {points.map((point) => (
-          <span
-            key={
-              point.kind === 'opening'
-                ? 'balance-opening'
-                : `balance-${point.transactionId}`
-            }
-            data-matches-filter={String(point.matchesFilter)}
-          >
-            {point.subject} {point.signedAmount ?? 'opening'} {point.balance}
-          </span>
-        ))}
-      </div>
-    ),
+const chartMocks = vi.hoisted(() => ({
+  configurations: [] as unknown[],
+  failNext: false,
+  register: vi.fn(),
 }));
+
+vi.mock('chart.js', () => {
+  const Chart = vi.fn(function (
+    _canvas: HTMLCanvasElement,
+    configuration: unknown,
+  ) {
+    if (chartMocks.failNext) {
+      chartMocks.failNext = false;
+      throw new Error('canvas unavailable');
+    }
+
+    chartMocks.configurations.push(configuration);
+    return {destroy: vi.fn()};
+  });
+  Object.assign(Chart, {register: chartMocks.register});
+
+  return {
+    ArcElement: 'ArcElement',
+    BarController: 'BarController',
+    BarElement: 'BarElement',
+    CategoryScale: 'CategoryScale',
+    Chart,
+    DoughnutController: 'DoughnutController',
+    Legend: 'Legend',
+    LineController: 'LineController',
+    LineElement: 'LineElement',
+    LinearScale: 'LinearScale',
+    PointElement: 'PointElement',
+    Tooltip: 'Tooltip',
+  };
+});
 
 vi.mock('../src/components/CategoryDoughnut.js', () => ({
   CategoryDoughnut: ({
@@ -74,6 +88,8 @@ vi.mock('../src/components/SemesterComparisonChart.js', () => ({
       </div>
     ),
 }));
+
+import {Chart} from 'chart.js';
 
 import {ReportApp} from '../src/components/ReportApp.js';
 import type {ReportPayload} from '../src/lib/load-report.js';
@@ -197,6 +213,16 @@ function mockScrollIntoView() {
 }
 
 describe('ReportApp', () => {
+  beforeEach(() => {
+    vi.mocked(Chart).mockClear();
+    chartMocks.configurations.length = 0;
+    chartMocks.failNext = false;
+  });
+
+  afterEach(() => {
+    chartMocks.failNext = false;
+  });
+
   it('renders report identity, full-ledger summary, and update timestamp', () => {
     render(<ReportApp payload={payload} />);
 
@@ -361,13 +387,23 @@ describe('ReportApp', () => {
     expect(within(table).getByText('影印講義')).toBeVisible();
     expect(within(table).queryByText('教室清潔用品')).not.toBeInTheDocument();
     const balance = screen.getByRole('region', {name: '總餘額走勢'});
-    expect(within(balance).getByText(/期初結餘/)).toBeVisible();
-    expect(within(balance).getByText(/期初班費/)).toBeVisible();
-    expect(within(balance).getByText(/教室清潔用品/)).toBeVisible();
-    expect(within(balance).getByText(/影印講義/)).toBeVisible();
     expect(
-      balance.querySelector('[data-matches-filter="false"]'),
-    ).toBeInTheDocument();
+      within(balance).getByRole('img', {name: '總餘額走勢圖'}),
+    ).toBeVisible();
+    const balanceConfiguration = chartMocks.configurations.at(-1) as {
+      data: {
+        datasets: Array<{
+          data: number[];
+          pointRadius: number[];
+          pointStyle: string[];
+        }>;
+      };
+    };
+    expect(balanceConfiguration.data.datasets[0]).toMatchObject({
+      data: [0, 5000, 4300, 4000],
+      pointRadius: [5, 2, 2, 5],
+      pointStyle: ['rectRot', 'circle', 'circle', 'rectRot'],
+    });
 
     const expenses = screen.getByRole('region', {name: '分類支出比例'});
     expect(within(expenses).getByText(/教材與影印 300/)).toBeVisible();
@@ -464,12 +500,33 @@ describe('ReportApp', () => {
     expect(
       screen.getByRole('region', {name: '主要收支變動'}),
     ).toHaveTextContent('目前沒有符合條件的收支變動');
-    expect(
-      screen.getByRole('region', {name: '總餘額走勢'}),
-    ).toHaveTextContent('期初班費');
+    const balance = screen.getByRole('region', {name: '總餘額走勢'});
+    await user.click(within(balance).getByRole('button', {name: '查看資料表'}));
+    expect(within(balance).getByText('期初班費')).toBeVisible();
     expect(
       screen.getByRole('table', {name: '班費交易明細'}),
     ).toHaveTextContent('沒有符合篩選條件的交易');
+  });
+
+  it('keeps the report usable when one Chart constructor fails', async () => {
+    chartMocks.failNext = true;
+    render(<ReportApp payload={payload} />);
+
+    expect(
+      await screen.findByText('圖表無法顯示，請查看資料表'),
+    ).toHaveAttribute('role', 'status');
+    const summary = screen.getByRole('region', {name: '帳務摘要'});
+    expect(within(summary).getByText('NT$4,000')).toBeVisible();
+    const transactionsTable = screen.getByRole('table', {
+      name: '班費交易明細',
+    });
+    expect(within(transactionsTable).getByText('影印講義')).toBeVisible();
+    expect(
+      within(screen.getByRole('region', {name: '總餘額走勢'})).getByRole(
+        'button',
+        {name: '查看資料表'},
+      ),
+    ).toBeVisible();
   });
 
   it('focuses and highlights a row from the largest list with smooth scrolling', async () => {
