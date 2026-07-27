@@ -20,7 +20,7 @@ export const emptyFilter: Readonly<LedgerFilter> = Object.freeze({
 const SAFE_INTEGER_RANGE_ERROR =
   'Ledger calculation exceeds the safe integer range';
 
-function addSafeInteger(left: number, right: number): number {
+export function addSafeInteger(left: number, right: number): number {
   const result = left + right;
 
   if (!Number.isSafeInteger(result)) {
