@@ -2,8 +2,10 @@ import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {Box, Text, useInput, useWindowSize} from 'ink';
 
 import {
+  calculateSemesterOpeningBalance,
   createLedgerView,
   emptyFilter,
+  isSemesterLocked,
   LedgerValidationError,
   MissingBackupError,
   previewAdd,
@@ -330,6 +332,20 @@ function ReadyApp({
     () => createLedgerView(state.transactions, filter),
     [filter, state.transactions],
   );
+  const openingBalance = useMemo(
+    () =>
+      filter.semester === null ||
+      !state.settings.semesters.some(
+        (semester) => semester.value === filter.semester,
+      )
+        ? undefined
+        : calculateSemesterOpeningBalance(
+            state.settings,
+            state.transactions,
+            filter.semester,
+          ),
+    [filter.semester, state.settings, state.transactions],
+  );
   const hasFilters =
     filter.semester !== null ||
     filter.category !== null ||
@@ -342,6 +358,17 @@ function ReadyApp({
       view.rows.length === 0 ? 0 : Math.min(current, view.rows.length - 1),
     );
   }, [view.rows.length]);
+
+  useEffect(() => {
+    setFilter((current) =>
+      current.semester !== null &&
+      !state.settings.semesters.some(
+        (semester) => semester.value === current.semester,
+      )
+        ? {...current, semester: null}
+        : current,
+    );
+  }, [state.settings.semesters]);
 
   useEffect(
     () => () => {
@@ -388,6 +415,13 @@ function ReadyApp({
       } else if (input === 'e') {
         const transaction = view.rows[selectedIndex]?.transaction;
         if (transaction !== undefined) {
+          if (isSemesterLocked(state.settings, transaction.semester)) {
+            setScreen({
+              name: 'error',
+              message: '此學期已鎖定，無法修改交易',
+            });
+            return;
+          }
           setFormToday(today());
           setScreen({
             name: 'form',
@@ -810,6 +844,7 @@ function ReadyApp({
         rows={view.rows}
         selectedIndex={selectedIndex}
         width={columns ?? 80}
+        {...(openingBalance === undefined ? {} : {openingBalance})}
       />
       <CommandBar />
     </Box>

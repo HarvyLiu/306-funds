@@ -81,9 +81,12 @@ async function clearInput(
   }
 }
 
-function fakeRepository(initialTransactions: Transaction[] = []) {
+function fakeRepository(
+  initialTransactions: Transaction[] = [],
+  initialSettings: LedgerSettings = settings,
+) {
   let state: LedgerState = {
-    settings: structuredClone(settings),
+    settings: structuredClone(initialSettings),
     transactions: structuredClone(initialTransactions),
   };
   const getState = vi.fn(() => structuredClone(state));
@@ -285,6 +288,31 @@ describe('App transaction mutations', () => {
     expect(lastFrame()).toContain(transaction.date);
   });
 
+  it('blocks editing a transaction in a locked semester before opening the form', async () => {
+    const fake = fakeRepository([{...transaction, semester: '第二學期'}], {
+      ...settings,
+      semesters: [
+        {value: '第一學期', status: 'active'},
+        {value: '第二學期', status: 'active'},
+      ],
+      locked_semesters: ['第二學期'],
+    });
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={fake.repository}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+    stdin.write('e');
+    await nextRender();
+
+    expect(lastFrame()).toContain('此學期已鎖定，無法修改交易');
+    expect(lastFrame()).not.toContain('編輯交易');
+    expect(fake.saveTransactions).not.toHaveBeenCalled();
+  });
+
   it('previews, saves, refreshes, and reselects an edited row after it moves', async () => {
     const newerTransaction: Transaction = {
       ...transaction,
@@ -380,6 +408,35 @@ describe('App transaction mutations', () => {
     await vi.waitFor(() => expect(fake.saveTransactions).toHaveBeenCalledOnce());
     expect(fake.saveTransactions).toHaveBeenCalledWith([]);
     await vi.waitFor(() => expect(lastFrame()).toContain('尚無交易紀錄'));
+  });
+
+  it('blocks deleting a transaction in a locked semester without confirmation', async () => {
+    const fake = fakeRepository(
+      [{...transaction, semester: '第二學期'}],
+      {
+        ...settings,
+        semesters: [
+          {value: '第一學期', status: 'active'},
+          {value: '第二學期', status: 'active'},
+        ],
+        locked_semesters: ['第二學期'],
+      },
+    );
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={fake.repository}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+
+    stdin.write('d');
+    await nextRender();
+
+    expect(lastFrame()).toContain('此學期已鎖定，無法修改交易');
+    expect(lastFrame()).not.toContain('刪除交易');
+    expect(fake.saveTransactions).not.toHaveBeenCalled();
   });
 
   it('shows the exact source-conflict message without retrying or leaking the path', async () => {

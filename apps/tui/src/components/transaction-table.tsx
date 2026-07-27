@@ -7,6 +7,7 @@ export interface TransactionTableProps {
   rows: LedgerRow[];
   selectedIndex: number;
   width: number;
+  openingBalance?: number;
 }
 
 type ColumnKey =
@@ -145,11 +146,13 @@ function TableLine({
   markerWidth,
   marker,
   values,
+  color,
 }: {
   columns: Column[];
   markerWidth: number;
   marker: string;
   values: Record<ColumnKey, string>;
+  color?: 'blue';
 }) {
   return (
     <Box>
@@ -177,7 +180,11 @@ function TableLine({
             marginRight={index === columns.length - 1 ? 0 : 1}
             justifyContent={column.align === 'right' ? 'flex-end' : 'flex-start'}
           >
-            <Text>{value}</Text>
+            {color === undefined ? (
+              <Text>{value}</Text>
+            ) : (
+              <Text color={color}>{value}</Text>
+            )}
           </Box>
         );
       })}
@@ -189,6 +196,7 @@ export function TransactionTable({
   rows,
   selectedIndex,
   width,
+  openingBalance,
 }: TransactionTableProps) {
   const safeWidth = Number.isFinite(width)
     ? Math.max(0, Math.floor(width))
@@ -199,6 +207,20 @@ export function TransactionTable({
   const headings = Object.fromEntries(
     columns.map((column) => [column.key, column.heading]),
   ) as Record<ColumnKey, string>;
+  const hasBalanceColumn = columns.some((column) => column.key === 'balance');
+  const openingValues: Record<ColumnKey, string> = {
+    date: '',
+    type: '',
+    subject: '期初結餘',
+    category: '',
+    officer: '',
+    amount:
+      hasBalanceColumn || openingBalance === undefined
+        ? ''
+        : formatTwd(openingBalance),
+    balance: openingBalance === undefined ? '' : formatTwd(openingBalance),
+    note: '',
+  };
 
   return (
     <Box flexDirection="column" width={safeWidth}>
@@ -208,6 +230,15 @@ export function TransactionTable({
         marker="  "
         values={headings}
       />
+      {openingBalance === undefined ? null : (
+        <TableLine
+          columns={columns}
+          markerWidth={markerWidth}
+          marker="  "
+          values={openingValues}
+          color="blue"
+        />
+      )}
       {rows.length === 0 ? (
         <Text>{cliTruncate('  尚無交易紀錄', safeWidth)}</Text>
       ) : (

@@ -18,6 +18,7 @@ const localizedReasons: Readonly<Record<string, string>> = {
   'Edited transaction could not be resolved': '無法確認編輯後的交易',
   'ID must be a lowercase UUID': 'ID 必須是小寫 UUID',
   'Ledger calculation exceeds the safe integer range': '帳本金額超出安全計算範圍',
+  'Locked semester transactions cannot be modified': '此學期已鎖定，無法修改交易',
   'Ledger file is missing': '找不到帳本檔案',
   'Malformed CSV': 'CSV 格式錯誤',
   'Malformed JSON': 'JSON 格式錯誤',

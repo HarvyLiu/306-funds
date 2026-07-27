@@ -181,8 +181,11 @@ export function TransactionForm({
     [settings.officers, values.handled_by],
   );
   const semesterOptions = useMemo(
-    () => selectableOptions(settings.semesters, values.semester),
-    [settings.semesters, values.semester],
+    () =>
+      selectableOptions(settings.semesters, values.semester).filter(
+        (option) => !settings.locked_semesters.includes(option.value),
+      ),
+    [settings.locked_semesters, settings.semesters, values.semester],
   );
   const isBlocked = step === 'category' && categoryOptions.length === 0;
 

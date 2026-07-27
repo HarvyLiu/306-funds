@@ -183,6 +183,155 @@ describe('ledger overview', () => {
     expect(selectedLine(lastFrame())).toBeUndefined();
   });
 
+  it('shows a semester opening balance independent of secondary filters', async () => {
+    const fakeRepository = repositoryWith({settings, transactions});
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={fakeRepository}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+
+    expect(lastFrame()).not.toContain('期初結餘');
+    stdin.write('f');
+    await nextRender();
+    stdin.write('2');
+    await nextRender();
+    stdin.write('1');
+    await nextRender();
+    stdin.write('1');
+    await nextRender();
+    stdin.write('1');
+    await nextRender();
+
+    expect(lastFrame()).toContain('期初結餘');
+    expect(lastFrame()).toContain('NT$0');
+    stdin.write('/');
+    await nextRender();
+    stdin.write('不存在');
+    await nextRender();
+    stdin.write('\r');
+    await nextRender();
+
+    expect(lastFrame()).toContain('期初結餘');
+    expect(lastFrame()).toContain('尚無交易紀錄');
+    stdin.write('f');
+    await nextRender();
+    for (let index = 0; index < 4; index += 1) {
+      stdin.write('1');
+      await nextRender();
+    }
+    expect(lastFrame()).not.toContain('期初結餘');
+  });
+
+  it('shows nonzero carryover while arrows select only current-semester transactions', async () => {
+    const semesterSettings: LedgerSettings = {
+      ...settings,
+      semesters: [
+        {value: '第一學期', status: 'active'},
+        {value: '第二學期', status: 'active'},
+      ],
+    };
+    const semesterTransactions = [
+      {...transactions[0]!, semester: '第二學期'},
+      transactions[1]!,
+      {...transactions[2]!, semester: '第二學期'},
+    ];
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={repositoryWith({
+          settings: semesterSettings,
+          transactions: semesterTransactions,
+        })}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+
+    stdin.write('f');
+    await nextRender();
+    stdin.write('3');
+    await nextRender();
+    for (let index = 0; index < 3; index += 1) {
+      stdin.write('1');
+      await nextRender();
+    }
+
+    let openingLine = lastFrame()
+      ?.split('\n')
+      .find((line) => line.includes('期初結餘'));
+    expect(openingLine).toContain('NT$5,000');
+    expect(openingLine).not.toContain('›');
+    expect(selectedLine(lastFrame())).toContain('影印');
+    stdin.write('\u001b[B');
+    await nextRender();
+    openingLine = lastFrame()
+      ?.split('\n')
+      .find((line) => line.includes('期初結餘'));
+    expect(openingLine).not.toContain('›');
+    expect(selectedLine(lastFrame())).toContain('清潔用品');
+  });
+
+  it('clears a stale semester filter after repository reload changes settings', async () => {
+    const semesterSettings: LedgerSettings = {
+      ...settings,
+      semesters: [
+        {value: '第一學期', status: 'active'},
+        {value: '第二學期', status: 'active'},
+      ],
+    };
+    let repositoryState: LedgerState = {
+      settings: semesterSettings,
+      transactions,
+    };
+    const repository = {
+      getState: vi.fn(() => structuredClone(repositoryState)),
+      reload: vi.fn(async () => {
+        repositoryState = {settings, transactions};
+      }),
+      saveSettings: vi.fn(),
+      saveTransactions: vi.fn(),
+    } as unknown as LedgerRepository;
+    const {lastFrame, stdin} = render(
+      <App
+        root="/ledger"
+        repository={repository}
+        setupComplete
+        onExit={vi.fn()}
+      />,
+    );
+
+    stdin.write('f');
+    await nextRender();
+    stdin.write('3');
+    await nextRender();
+    for (let index = 0; index < 3; index += 1) {
+      stdin.write('1');
+      await nextRender();
+    }
+    expect(lastFrame()).toContain('學期 第二學期');
+    expect(lastFrame()).toContain('期初結餘');
+    stdin.write('/');
+    await nextRender();
+    stdin.write('影印');
+    await nextRender();
+    stdin.write('\r');
+    await nextRender();
+    expect(lastFrame()).toContain('搜尋 影印');
+
+    stdin.write('p');
+    await vi.waitFor(() => expect(repository.reload).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(lastFrame()).toContain('資料檢查通過'));
+    stdin.write('\r');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain('篩選：搜尋 影印'));
+    expect(lastFrame()).not.toContain('學期 第二學期');
+    expect(lastFrame()).not.toContain('期初結餘');
+  });
+
   it('reacts to terminal resize events by switching table layouts', async () => {
     const fakeRepository = repositoryWith({settings, transactions});
     const rendered = render(
@@ -242,6 +391,62 @@ describe('TransactionTable layout', () => {
     expect(selectedLine(first.lastFrame())).toContain('期初');
     expect(frameWidth(first.lastFrame())).toBe(firstWidth);
   });
+
+  it('renders a blue-equivalent opening balance row before transactions without selecting it', () => {
+    const {lastFrame} = render(
+      <TransactionTable
+        rows={rows}
+        selectedIndex={0}
+        width={120}
+        openingBalance={-500}
+      />,
+    );
+    const lines = lastFrame()!.split('\n');
+
+    expect(lines[1]).toContain('期初結餘');
+    expect(lines[1]).toContain('-NT$500');
+    expect(lines[1]).not.toContain('›');
+    expect(selectedLine(lastFrame())).toContain('影印');
+  });
+
+  it.each([0, -500])(
+    'renders an opening balance of %i when transaction rows are empty',
+    (openingBalance) => {
+      const {lastFrame} = render(
+        <TransactionTable
+          rows={[]}
+          selectedIndex={0}
+          width={60}
+          openingBalance={openingBalance}
+        />,
+      );
+
+      expect(lastFrame()).toContain('期初結餘');
+      expect(lastFrame()).toContain(
+        openingBalance === 0 ? 'NT$0' : '-NT$500',
+      );
+      expect(lastFrame()).toContain('尚無交易紀錄');
+    },
+  );
+
+  it.each([40, 24])(
+    'keeps the opening balance within ultra-compact width %i',
+    (width) => {
+      const {lastFrame} = render(
+        <TransactionTable
+          rows={rows}
+          selectedIndex={0}
+          width={width}
+          openingBalance={0}
+        />,
+      );
+
+      expect(lastFrame()).toContain('NT$0');
+      for (const line of (lastFrame() ?? '').split('\n')) {
+        expect(terminalWidth(line)).toBeLessThanOrEqual(width);
+      }
+    },
+  );
 
   it('normalizes note line feeds into one physical table row', () => {
     const transaction = {

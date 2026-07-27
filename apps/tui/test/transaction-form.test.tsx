@@ -191,6 +191,59 @@ describe('TransactionForm', () => {
     expect(lastFrame()).not.toContain('舊學期');
   });
 
+  it('excludes locked semesters from add and edit destinations', async () => {
+    const lockedSettings = {...settings, locked_semesters: ['第二學期']};
+    const add = render(
+      <TransactionForm
+        mode="add"
+        settings={lockedSettings}
+        today="2026-08-17"
+        onReview={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    add.stdin.write('\r');
+    await nextRender();
+    await submitText(add.stdin, '講義');
+    add.stdin.write('1');
+    await nextRender();
+    add.stdin.write('1');
+    await nextRender();
+    await submitText(add.stdin, '100');
+    add.stdin.write('1');
+    await nextRender();
+    expect(add.lastFrame()).not.toContain('第二學期');
+    expect(add.lastFrame()).toContain('第一學期');
+
+    const edit = render(
+      <TransactionForm
+        mode="edit"
+        settings={lockedSettings}
+        initialValue={{...editValue, semester: '第一學期'}}
+        today="2026-08-17"
+        onReview={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+    edit.stdin.write('\r');
+    await nextRender();
+    edit.stdin.write('\r');
+    await nextRender();
+    expect(edit.lastFrame()).toContain('舊分類');
+    edit.stdin.write('\r');
+    await nextRender();
+    edit.stdin.write('\r');
+    await nextRender();
+    edit.stdin.write('\r');
+    await nextRender();
+    expect(edit.lastFrame()).toContain('舊總務');
+    edit.stdin.write('\r');
+    await nextRender();
+    expect(edit.lastFrame()).not.toContain('第二學期');
+    expect(edit.lastFrame()).toContain('第一學期');
+  });
+
   it.each([
     {name: 'empty', categories: []},
     {
