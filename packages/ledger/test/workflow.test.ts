@@ -6,6 +6,7 @@ import {afterEach, expect, test} from 'vitest';
 
 import {
   createLedgerView,
+  LedgerValidationError,
   previewAdd,
   previewDelete,
   previewEdit,
@@ -195,4 +196,46 @@ test('persists an add, edit, delete, reopen, and filtered reporting workflow', a
     {subject: '影印', amount: 350, runningBalance: 4650},
     {subject: '期初餘額', amount: 5000, runningBalance: 5000},
   ]);
+});
+
+test('persists a non-current semester lock and blocks its transaction mutations after reload', async () => {
+  const root = await fs.mkdtemp(join(tmpdir(), 'class-fund-workflow-'));
+  roots.push(root);
+  const settings: LedgerSettings = {
+    ...workflowSettings,
+    locked_semesters: ['第二學期'],
+  };
+  await fs.mkdir(join(root, 'data'));
+  await Promise.all([
+    fs.writeFile(join(root, 'data/settings.json'), serializeSettings(settings)),
+    fs.writeFile(
+      join(root, 'data/transactions.csv'),
+      serializeTransactionsCsv([], settings),
+    ),
+  ]);
+
+  const repository = await LedgerRepository.open(root);
+  await repository.saveSettings(repository.getState().settings);
+  const reloaded = await LedgerRepository.open(root);
+
+  expect(reloaded.getState().settings.locked_semesters).toEqual(['第二學期']);
+  expect(() =>
+    previewAdd(
+      reloaded.getState(),
+      {
+        date: '2026-09-01',
+        semester: '第二學期',
+        subject: '掃具',
+        category: '清潔用品',
+        type: 'expense',
+        amount: 700,
+        handled_by: '另一位總務',
+        note: '',
+      },
+      {
+        createId: () => '6ed1a6b4-1ca2-45ce-91a3-2f53e5560499',
+        now: () => '2026-09-01T10:00:00+08:00',
+      },
+    ),
+  ).toThrow(LedgerValidationError);
 });

@@ -79,6 +79,7 @@ function cloneTransaction(transaction: Transaction): Transaction {
 
 function transactionFromInput(
   input: TransactionInput,
+  semester: unknown,
   id: string,
   createdAt: string,
 ): Transaction {
@@ -89,7 +90,7 @@ function transactionFromInput(
     transaction = {
       id,
       date: input.date,
-      semester: input.semester,
+      semester: semester as string,
       subject: input.subject,
       category: input.category,
       type: input.type,
@@ -128,6 +129,41 @@ function transactionFailure(
     field,
     message,
   });
+}
+
+function lockedSemesterTransactionFailure(row?: number): never {
+  transactionFailure(
+    'semester',
+    'Locked semester transactions cannot be modified',
+    row,
+  );
+}
+
+export function isSemesterLocked(
+  settings: LedgerSettings,
+  semester: string,
+): boolean {
+  return settings.locked_semesters.includes(semester);
+}
+
+function snapshotInputSemester(
+  input: TransactionInput,
+): unknown {
+  try {
+    return input.semester;
+  } catch {
+    transactionFailure('$', 'Transaction input could not be inspected');
+  }
+}
+
+function rejectLockedInputSemester(
+  settings: LedgerSettings,
+  semester: unknown,
+  row: number,
+): void {
+  if (typeof semester === 'string' && isSemesterLocked(settings, semester)) {
+    lockedSemesterTransactionFailure(row);
+  }
 }
 
 function isOptionGroup(value: unknown): value is OptionGroup {
@@ -264,8 +300,15 @@ export function previewAdd(
   dependencies: MutationDependencies = defaultDependencies,
 ): MutationPreview {
   const current = canonicalizeState(state);
+  const inputSemester = snapshotInputSemester(input);
+  rejectLockedInputSemester(
+    current.settings,
+    inputSemester,
+    current.transactions.length + 2,
+  );
   const targetCandidate = transactionFromInput(
     input,
+    inputSemester,
     dependencies.createId(),
     dependencies.now(),
   );
@@ -276,6 +319,9 @@ export function previewAdd(
   const target = nextTransactions.at(-1);
   if (target === undefined) {
     transactionFailure('$', 'Added transaction could not be resolved');
+  }
+  if (isSemesterLocked(current.settings, target.semester)) {
+    lockedSemesterTransactionFailure(current.transactions.length + 2);
   }
 
   return mutationPreview(
@@ -297,9 +343,15 @@ export function previewEdit(
   if (original === undefined) {
     transactionFailure('id', 'Transaction was not found');
   }
+  if (isSemesterLocked(current.settings, original.semester)) {
+    lockedSemesterTransactionFailure(index + 2);
+  }
+  const inputSemester = snapshotInputSemester(input);
+  rejectLockedInputSemester(current.settings, inputSemester, index + 2);
 
   const targetCandidate = transactionFromInput(
     input,
+    inputSemester,
     original.id,
     original.created_at,
   );
@@ -314,6 +366,9 @@ export function previewEdit(
   const target = nextTransactions[index];
   if (target === undefined) {
     transactionFailure('$', 'Edited transaction could not be resolved');
+  }
+  if (isSemesterLocked(current.settings, target.semester)) {
+    lockedSemesterTransactionFailure(index + 2);
   }
   const changedFields = ALL_TRANSACTION_FIELDS.filter(
     (field) => original[field] !== target[field],
@@ -336,6 +391,9 @@ export function previewDelete(
   const original = current.transactions[index];
   if (original === undefined) {
     transactionFailure('id', 'Transaction was not found');
+  }
+  if (isSemesterLocked(current.settings, original.semester)) {
+    lockedSemesterTransactionFailure(index + 2);
   }
 
   const nextTransactions = canonicalizeTransactions(
@@ -367,6 +425,11 @@ export function addOption(
   }
   if (existing !== undefined) {
     existing.status = 'active';
+    if (optionGroup === 'semesters') {
+      settings.locked_semesters = settings.locked_semesters.filter(
+        (semester) => semester !== value,
+      );
+    }
     return validateSettingsValue(settings);
   }
 
@@ -398,6 +461,9 @@ export function archiveOption(
   if (optionGroup === 'officers' && settings.default_officer === value) {
     settingsFailure('default_officer', 'Default officer cannot be archived');
   }
+  if (optionGroup === 'semesters' && isSemesterLocked(settings, value)) {
+    settingsFailure('locked_semesters', 'Locked semester cannot be archived');
+  }
 
   const referenceField = GROUP_REFERENCE_FIELDS[optionGroup];
   const referenceIndex = current.transactions.findIndex(
@@ -420,7 +486,39 @@ export function setActiveSemester(
   value: string,
 ): LedgerSettings {
   const settings = validateSettingsValue(state.settings);
+  if (isSemesterLocked(settings, value)) {
+    settingsFailure('active_semester', 'Locked semester cannot become active');
+  }
   settings.active_semester = value;
+  return validateSettingsValue(settings);
+}
+
+export function setSemesterLocked(
+  state: LedgerState,
+  value: string,
+  locked: boolean,
+): LedgerSettings {
+  const settings = validateSettingsValue(state.settings);
+
+  if (typeof locked !== 'boolean') {
+    settingsFailure('locked_semesters', 'Lock state must be a boolean');
+  }
+
+  const semester = settings.semesters.find((option) => option.value === value);
+
+  if (semester?.status !== 'active') {
+    settingsFailure('locked_semesters', 'Semester must be an active configured option');
+  }
+  if (locked && settings.active_semester === value) {
+    settingsFailure('active_semester', 'Active semester cannot be locked');
+  }
+
+  settings.locked_semesters = locked
+    ? isSemesterLocked(settings, value)
+      ? settings.locked_semesters
+      : [...settings.locked_semesters, value]
+    : settings.locked_semesters.filter((semesterValue) => semesterValue !== value);
+
   return validateSettingsValue(settings);
 }
 

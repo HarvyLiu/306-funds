@@ -3,12 +3,14 @@ import {describe, expect, test} from 'vitest';
 import {
   addOption,
   archiveOption,
+  isSemesterLocked,
   LedgerValidationError,
   previewAdd,
   previewDelete,
   previewEdit,
   setActiveSemester,
   setDefaultOfficer,
+  setSemesterLocked,
   TRANSACTION_HEADERS,
   type LedgerSettings,
   type LedgerState,
@@ -54,6 +56,28 @@ function stateFixture(): LedgerState {
   };
 }
 
+function lockedSecondSemesterState(): LedgerState {
+  return {
+    settings: {
+      ...structuredClone(validSettings),
+      locked_semesters: ['第二學期'],
+    },
+    transactions: [
+      structuredClone(openingIncome),
+      {
+        ...structuredClone(openingIncome),
+        id: '018f7f2c-98c0-7d5a-a4df-1bcd4a670002',
+        semester: '第二學期',
+        subject: '第二學期支出',
+        category: '教材與影印',
+        type: 'expense',
+        amount: 100,
+        created_at: '2026-08-02T09:00:00+08:00',
+      },
+    ],
+  };
+}
+
 function validationError(run: () => unknown): LedgerValidationError {
   try {
     run();
@@ -95,6 +119,183 @@ function settingsWithArchivedOptions(): LedgerSettings {
 }
 
 describe('transaction mutation previews', () => {
+  test('rejects additions assigned to a locked semester without mutating inputs', () => {
+    const state = lockedSecondSemesterState();
+    const input = {...expense, semester: '第二學期'};
+    const stateBefore = structuredClone(state);
+    const inputBefore = structuredClone(input);
+
+    const error = validationError(() => previewAdd(state, input, dependencies));
+
+    expect(error.issues).toContainEqual({
+      source: 'transactions',
+      row: 4,
+      field: 'semester',
+      message: 'Locked semester transactions cannot be modified',
+    });
+    expect(state).toEqual(stateBefore);
+    expect(input).toEqual(inputBefore);
+  });
+
+  test('rejects a locked addition before generating identity fields', () => {
+    const calls: string[] = [];
+
+    const error = validationError(() =>
+      previewAdd(
+        lockedSecondSemesterState(),
+        {...expense, semester: '第二學期'},
+        {
+          createId: () => {
+            calls.push('createId');
+            return dependencies.createId();
+          },
+          now: () => {
+            calls.push('now');
+            return dependencies.now();
+          },
+        },
+      ),
+    );
+
+    expectIssue(error, 'transactions', 'semester');
+    expect(calls).toEqual([]);
+  });
+
+  test('reports a locked addition before unrelated input validation errors', () => {
+    const error = validationError(() =>
+      previewAdd(
+        lockedSecondSemesterState(),
+        {...expense, semester: '第二學期', amount: 0},
+        dependencies,
+      ),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'transactions',
+        row: 4,
+        field: 'semester',
+        message: 'Locked semester transactions cannot be modified',
+      },
+    ]);
+  });
+
+  test('snapshots an add semester once before lock checks and candidate construction', () => {
+    const input = {...expense};
+    let semesterReads = 0;
+    Object.defineProperty(input, 'semester', {
+      enumerable: true,
+      get: () => {
+        semesterReads += 1;
+        return semesterReads === 1 ? '第一學期' : '第二學期';
+      },
+    });
+
+    const preview = previewAdd(
+      lockedSecondSemesterState(),
+      input,
+      dependencies,
+    );
+
+    expect(preview.target.semester).toBe('第一學期');
+    expect(semesterReads).toBe(1);
+  });
+
+  test('rejects edits of an existing locked-semester transaction without mutating inputs', () => {
+    const state = lockedSecondSemesterState();
+    const original = state.transactions[1]!;
+    const input = {...expense, semester: '第一學期'};
+    const stateBefore = structuredClone(state);
+    const inputBefore = structuredClone(input);
+
+    const error = validationError(() => previewEdit(state, original.id, input));
+
+    expect(error.issues).toContainEqual({
+      source: 'transactions',
+      row: 3,
+      field: 'semester',
+      message: 'Locked semester transactions cannot be modified',
+    });
+    expect(state).toEqual(stateBefore);
+    expect(input).toEqual(inputBefore);
+  });
+
+  test('rejects edits that move an unlocked transaction into a locked semester', () => {
+    const state = lockedSecondSemesterState();
+    const input = {...expense, semester: '第二學期'};
+    const stateBefore = structuredClone(state);
+    const inputBefore = structuredClone(input);
+
+    const error = validationError(() =>
+      previewEdit(state, openingIncome.id, input),
+    );
+
+    expect(error.issues).toContainEqual({
+      source: 'transactions',
+      row: 2,
+      field: 'semester',
+      message: 'Locked semester transactions cannot be modified',
+    });
+    expect(state).toEqual(stateBefore);
+    expect(input).toEqual(inputBefore);
+  });
+
+  test('reports a locked edit destination before unrelated input validation errors', () => {
+    const error = validationError(() =>
+      previewEdit(
+        lockedSecondSemesterState(),
+        openingIncome.id,
+        {...expense, semester: '第二學期', amount: 0},
+      ),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'transactions',
+        row: 2,
+        field: 'semester',
+        message: 'Locked semester transactions cannot be modified',
+      },
+    ]);
+  });
+
+  test('snapshots an edit semester once before lock checks and candidate construction', () => {
+    const input = {...expense};
+    let semesterReads = 0;
+    Object.defineProperty(input, 'semester', {
+      enumerable: true,
+      get: () => {
+        semesterReads += 1;
+        return semesterReads === 1 ? '第一學期' : '第二學期';
+      },
+    });
+
+    const preview = previewEdit(
+      lockedSecondSemesterState(),
+      openingIncome.id,
+      input,
+    );
+
+    expect(preview.target.semester).toBe('第一學期');
+    expect(semesterReads).toBe(1);
+  });
+
+  test('rejects deletion of a locked-semester transaction without mutating state', () => {
+    const state = lockedSecondSemesterState();
+    const original = state.transactions[1]!;
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() => previewDelete(state, original.id));
+
+    expect(error.issues).toContainEqual({
+      source: 'transactions',
+      row: 3,
+      field: 'semester',
+      message: 'Locked semester transactions cannot be modified',
+    });
+    expect(state).toEqual(stateBefore);
+  });
+
   test('previews an appended expense without mutating any caller input', () => {
     const state = stateFixture();
     const stateBefore = structuredClone(state);
@@ -320,6 +521,25 @@ describe('transaction mutation previews', () => {
     expect(JSON.stringify(error.issues)).not.toContain(secret);
   });
 
+  test('normalizes errors thrown during early semester inspection', () => {
+    const secret = 'student-private-semester-accessor-payload';
+    const throwingInput = {...expense};
+    Object.defineProperty(throwingInput, 'semester', {
+      enumerable: true,
+      get: () => {
+        throw new Error(secret);
+      },
+    });
+
+    const error = validationError(() =>
+      previewAdd(lockedSecondSemesterState(), throwingInput, dependencies),
+    );
+
+    expectIssue(error, 'transactions', '$');
+    expect(String(error)).not.toContain(secret);
+    expect(JSON.stringify(error.issues)).not.toContain(secret);
+  });
+
   test.each([
     {
       name: 'injected ID',
@@ -383,6 +603,119 @@ describe('transaction mutation previews', () => {
 });
 
 describe('settings option mutations', () => {
+  test('queries and changes a non-current semester lock without mutating input', () => {
+    const state = stateFixture();
+    const stateBefore = structuredClone(state);
+
+    expect(isSemesterLocked(state.settings, '第二學期')).toBe(false);
+
+    const locked = setSemesterLocked(state, '第二學期', true);
+    const repeated = setSemesterLocked(
+      {settings: locked, transactions: []},
+      '第二學期',
+      true,
+    );
+    const unlocked = setSemesterLocked(
+      {settings: locked, transactions: []},
+      '第二學期',
+      false,
+    );
+
+    expect(locked.locked_semesters).toEqual(['第二學期']);
+    expect(isSemesterLocked(locked, '第二學期')).toBe(true);
+    expect(repeated).toEqual(locked);
+    expect(unlocked.locked_semesters).toEqual([]);
+    expect(locked).not.toBe(state.settings);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test('rejects locking the active semester', () => {
+    const state = stateFixture();
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      setSemesterLocked(state, '第一學期', true),
+    );
+
+    expect(error.issues).toContainEqual({
+      source: 'settings',
+      field: 'active_semester',
+      message: 'Active semester cannot be locked',
+    });
+    expect(state).toEqual(stateBefore);
+  });
+
+  test.each(['false', 0, null, undefined])(
+    'rejects a non-boolean runtime lock state: %j',
+    (locked) => {
+      const state = stateFixture();
+      const stateBefore = structuredClone(state);
+
+      const error = validationError(() =>
+        setSemesterLocked(
+          state,
+          '第二學期',
+          locked as unknown as boolean,
+        ),
+      );
+
+      expect(error.issues).toEqual([
+        {
+          source: 'settings',
+          field: 'locked_semesters',
+          message: 'Lock state must be a boolean',
+        },
+      ]);
+      expect(state).toEqual(stateBefore);
+    },
+  );
+
+  test.each(['不存在的學期', '已封存學期'])(
+    'rejects locking a non-active semester target: %s',
+    (value) => {
+      const state = stateFixture();
+      state.settings = settingsWithArchivedOptions();
+      const stateBefore = structuredClone(state);
+
+      const error = validationError(() => setSemesterLocked(state, value, true));
+
+      expectIssue(error, 'settings', 'locked_semesters');
+      expect(state).toEqual(stateBefore);
+    },
+  );
+
+  test('rejects activating a locked semester without mutating state', () => {
+    const state = lockedSecondSemesterState();
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() => setActiveSemester(state, '第二學期'));
+
+    expect(error.issues).toContainEqual({
+      source: 'settings',
+      field: 'active_semester',
+      message: 'Locked semester cannot become active',
+    });
+    expect(state).toEqual(stateBefore);
+  });
+
+  test('rejects archival of a locked semester before reference checks', () => {
+    const state = lockedSecondSemesterState();
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      archiveOption(state, 'semesters', '第二學期'),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'locked_semesters',
+        message: 'Locked semester cannot be archived',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
   test.each([
     {group: 'semesters', field: 'semester', value: '第二學期'},
     {group: 'categories', field: 'category', value: '教材與影印'},
@@ -525,6 +858,9 @@ describe('settings option mutations', () => {
 
     expect(settings[group]).toContainEqual({value, status: 'active'});
     expect(settings[group].filter((option) => option.value === value)).toHaveLength(1);
+    if (group === 'semesters') {
+      expect(settings.locked_semesters).not.toContain(value);
+    }
     expect(settings.active_semester).toBe(state.settings.active_semester);
     expect(settings.default_officer).toBe(state.settings.default_officer);
     expect(settings).not.toBe(state.settings);
@@ -562,6 +898,16 @@ describe('settings option mutations', () => {
     expect(settings).not.toBe(state.settings);
     expect(settings.categories).not.toBe(state.settings.categories);
     expect(state).toEqual(stateBefore);
+  });
+
+  test('adds a new semester unlocked', () => {
+    const settings = addOption(stateFixture(), 'semesters', '第三學期');
+
+    expect(settings.semesters).toContainEqual({
+      value: '第三學期',
+      status: 'active',
+    });
+    expect(settings.locked_semesters).not.toContain('第三學期');
   });
 
   test('sets active semester only to an active option without mutation', () => {
