@@ -1,11 +1,15 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "currency": "TWD",
   "active_semester": "三上",
   "default_officer": "劉鎬維",
   "semesters": [
     {
-      "value": "三上",
+      "value": "二上",
+      "status": "active"
+    },
+    {
+      "value": "二下",
       "status": "active"
     },
     {
@@ -13,7 +17,7 @@
       "status": "active"
     },
     {
-      "value": "三下",
+      "value": "三上",
       "status": "active"
     }
   ],
@@ -49,6 +53,10 @@
     {
       "value": "其他",
       "status": "active"
+    },
+    {
+      "value": "冷氣",
+      "status": "active"
     }
   ],
   "officers": [
@@ -59,6 +67,11 @@
     {
       "value": "陳信衡",
       "status": "active"
+    },
+    {
+      "value": "林家賢",
+      "status": "active"
     }
-  ]
+  ],
+  "locked_semesters": []
 }
