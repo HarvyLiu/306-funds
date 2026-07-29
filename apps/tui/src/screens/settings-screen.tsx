@@ -8,6 +8,7 @@ import {
   archiveOption,
   isSemesterLocked,
   LedgerValidationError,
+  moveSemester,
   setActiveSemester,
   setDefaultOfficer,
   setSemesterLocked,
@@ -16,15 +17,28 @@ import {
   type LedgerSettings,
   type LedgerState,
   type OptionGroup,
+  type SemesterMoveDirection,
 } from '@class-fund/ledger';
 
 import {ModalFrame} from '../components/modal-frame.js';
+
+export interface SettingsSavedOptions {
+  stayOpen?: boolean;
+}
 
 export interface SettingsScreenProps {
   state: LedgerState;
   onSave(settings: LedgerSettings): Promise<void>;
   onCancel(): void;
-  onSaved?(settings: LedgerSettings): void;
+  onSaved?(
+    settings: LedgerSettings,
+    options?: SettingsSavedOptions,
+  ): void;
+}
+
+interface PersistOptions {
+  stayOpen?: boolean;
+  successMessage?: string;
 }
 
 type Action =
@@ -36,7 +50,8 @@ type Action =
   | 'semester-lock'
   | 'archive-semester'
   | 'archive-category'
-  | 'archive-officer';
+  | 'archive-officer'
+  | 'reorder-semester';
 
 type AddAction = Extract<Action, `add-${string}`>;
 
@@ -50,6 +65,7 @@ const actions: Array<{label: string; value: Action}> = [
   {label: '封存學期', value: 'archive-semester'},
   {label: '封存分類', value: 'archive-category'},
   {label: '封存經手人', value: 'archive-officer'},
+  {label: '調整學期順序', value: 'reorder-semester'},
 ];
 
 const addOptionGroups: Record<AddAction, OptionGroup> = {
@@ -64,6 +80,39 @@ function isAddAction(action: Action): action is AddAction {
 
 function activeOptions(options: readonly LedgerOption[]): LedgerOption[] {
   return options.filter((option) => option.status === 'active');
+}
+
+function semesterManagementLabel(
+  settings: LedgerSettings,
+  option: LedgerOption,
+): string {
+  const statuses: string[] = [];
+  if (option.status === 'active') statuses.push('啟用中');
+  else statuses.push('已封存');
+  if (option.value === settings.active_semester) statuses.push('目前學期');
+  if (isSemesterLocked(settings, option.value)) statuses.push('已鎖定');
+  return `${option.value}（${statuses.join('／')}）`;
+}
+
+function semesterMoveItems(
+  settings: LedgerSettings,
+  value: string,
+): Array<{label: string; value: SemesterMoveDirection}> {
+  const index = settings.semesters.findIndex(
+    (semester) => semester.value === value,
+  );
+  if (index === -1 || isSemesterLocked(settings, value)) return [];
+
+  const items: Array<{label: string; value: SemesterMoveDirection}> = [];
+  const previous = settings.semesters[index - 1];
+  const next = settings.semesters[index + 1];
+  if (previous !== undefined && !isSemesterLocked(settings, previous.value)) {
+    items.push({label: '往前移', value: 'earlier'});
+  }
+  if (next !== undefined && !isSemesterLocked(settings, next.value)) {
+    items.push({label: '往後移', value: 'later'});
+  }
+  return items;
 }
 
 function validationMessage(
@@ -82,6 +131,12 @@ function validationMessage(
   }
   if (messages.includes('Locked semester cannot be archived')) {
     return '已鎖定學期不可封存，請先解鎖';
+  }
+  if (messages.includes('Locked semester cannot be reordered')) {
+    return '已鎖定學期不可調整順序，請先解鎖';
+  }
+  if (messages.includes('Semester cannot move beyond configured order')) {
+    return '此學期目前沒有可移動的位置';
   }
   if (messages.includes('Default officer cannot be archived')) {
     return '預設經手人不可封存';
@@ -106,6 +161,7 @@ export function SettingsScreen({
   onSaved,
 }: SettingsScreenProps) {
   const [action, setAction] = useState<Action | null>(null);
+  const [selectedSemester, setSelectedSemester] = useState<string | null>(null);
   const [optionValue, setOptionValue] = useState('');
   const [message, setMessage] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -115,7 +171,11 @@ export function SettingsScreen({
     (_input, key) => {
       if (!key.escape || pendingRef.current) return;
       if (action === null) onCancel();
-      else {
+      else if (selectedSemester !== null) {
+        setSelectedSemester(null);
+        setOptionValue('');
+        setMessage(null);
+      } else {
         setAction(null);
         setOptionValue('');
         setMessage(null);
@@ -127,15 +187,21 @@ export function SettingsScreen({
   async function persist(
     next: LedgerSettings,
     selectedAction: Action,
-  ): Promise<void> {
-    if (pendingRef.current) return;
+    options: PersistOptions = {},
+  ): Promise<boolean> {
+    if (pendingRef.current) return false;
     pendingRef.current = true;
     setPending(true);
     setMessage(null);
     try {
       await onSave(next);
-      setMessage('設定已儲存');
-      onSaved?.(next);
+      setMessage(options.successMessage ?? '設定已儲存');
+      if (options.stayOpen === true) {
+        onSaved?.(next, {stayOpen: true});
+      } else {
+        onSaved?.(next);
+      }
+      return true;
     } catch (error) {
       if (error instanceof SourceConflictError) {
         setMessage('檔案已被外部修改。請重新載入後再試。');
@@ -144,6 +210,7 @@ export function SettingsScreen({
       } else {
         setMessage('無法儲存設定，請確認檔案權限後再試。');
       }
+      return false;
     } finally {
       pendingRef.current = false;
       setPending(false);
@@ -173,6 +240,8 @@ export function SettingsScreen({
         case 'add-category':
           next = addOption(state, addOptionGroups[action], value);
           break;
+        case 'reorder-semester':
+          return;
         default: {
           const group: OptionGroup =
             action === 'archive-semester'
@@ -188,6 +257,26 @@ export function SettingsScreen({
       setMessage(
         error instanceof LedgerValidationError
           ? validationMessage(error, action)
+          : '設定內容無效，請檢查選擇或輸入值',
+      );
+    }
+  }
+
+  async function proposeSemesterMove(
+    direction: SemesterMoveDirection,
+  ): Promise<void> {
+    if (selectedSemester === null) return;
+    try {
+      const next = moveSemester(state, selectedSemester, direction);
+      const saved = await persist(next, 'reorder-semester', {
+        stayOpen: true,
+        successMessage: '學期順序已儲存',
+      });
+      if (saved) setSelectedSemester(null);
+    } catch (error) {
+      setMessage(
+        error instanceof LedgerValidationError
+          ? validationMessage(error, 'reorder-semester')
           : '設定內容無效，請檢查選擇或輸入值',
       );
     }
@@ -217,6 +306,40 @@ export function SettingsScreen({
         onSubmit={propose}
       />
     );
+  } else if (action === 'reorder-semester') {
+    if (selectedSemester === null) {
+      content = (
+        <SelectInput
+          key={action}
+          isFocused={!pending}
+          items={state.settings.semesters.map((option) => ({
+            label: semesterManagementLabel(state.settings, option),
+            value: option.value,
+          }))}
+          onSelect={(item) => {
+            setMessage(null);
+            if (isSemesterLocked(state.settings, item.value)) {
+              setMessage('已鎖定學期不可調整順序，請先解鎖');
+              return;
+            }
+            setSelectedSemester(item.value);
+          }}
+        />
+      );
+    } else {
+      const moveItems = semesterMoveItems(state.settings, selectedSemester);
+      content =
+        moveItems.length === 0 ? (
+          <Text>此學期目前沒有可移動的位置</Text>
+        ) : (
+          <SelectInput
+            key={`${action}:${selectedSemester}`}
+            isFocused={!pending}
+            items={moveItems}
+            onSelect={(item) => void proposeSemesterMove(item.value)}
+          />
+        );
+    }
   } else {
     const options =
       action === 'semester'
@@ -253,7 +376,15 @@ export function SettingsScreen({
       <Box>{content}</Box>
       {pending ? <Text>正在儲存設定…</Text> : null}
       {message === null ? null : (
-        <Text color={message === '設定已儲存' ? 'green' : 'red'}>{message}</Text>
+        <Text
+          color={
+            message === '設定已儲存' || message === '學期順序已儲存'
+              ? 'green'
+              : 'red'
+          }
+        >
+          {message}
+        </Text>
       )}
       <Text>Esc 返回</Text>
     </ModalFrame>

@@ -6,6 +6,7 @@ import {
 } from '@class-fund/ledger';
 import type {LedgerRepository} from '@class-fund/ledger/node';
 import {cleanup, render} from 'ink-testing-library';
+import {useState} from 'react';
 import {afterEach, describe, expect, it, vi} from 'vitest';
 
 import {App} from '../src/app.js';
@@ -91,6 +92,41 @@ async function choose(
 ): Promise<void> {
   stdin.write(value);
   await nextRender();
+}
+
+async function chooseIndex(
+  stdin: {write(data: string): void},
+  oneBasedIndex: number,
+): Promise<void> {
+  for (let index = 1; index < oneBasedIndex; index += 1) {
+    stdin.write('j');
+    await nextRender();
+  }
+  stdin.write('\r');
+  await nextRender();
+}
+
+function StatefulSettingsScreen({
+  initialSettings,
+  onSave,
+  onSaved,
+}: {
+  initialSettings: LedgerSettings;
+  onSave: (settings: LedgerSettings) => void;
+  onSaved?: (...args: unknown[]) => void;
+}) {
+  const [current, setCurrent] = useState(initialSettings);
+  return (
+    <SettingsScreen
+      state={{settings: current, transactions: []}}
+      onSave={async (next) => {
+        onSave(next);
+        setCurrent(next);
+      }}
+      onCancel={vi.fn()}
+      {...(onSaved === undefined ? {} : {onSaved})}
+    />
+  );
 }
 
 afterEach(() => cleanup());
@@ -566,6 +602,160 @@ describe('SettingsScreen', () => {
     expect(onSaved).toHaveBeenCalledWith(
       expect.objectContaining({locked_semesters: ['第二學期']}),
     );
+  });
+
+  it('shows all semesters in stored order with management statuses', async () => {
+    const managed = structuredClone(settings);
+    managed.semesters.splice(1, 0, {
+      value: '已封存學期',
+      status: 'archived',
+    });
+    managed.locked_semesters = ['第二學期'];
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: managed, transactions}}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 10);
+    const frame = lastFrame()!;
+    expect(frame.indexOf('第一學期')).toBeLessThan(
+      frame.indexOf('已封存學期'),
+    );
+    expect(frame.indexOf('已封存學期')).toBeLessThan(
+      frame.indexOf('第二學期'),
+    );
+    expect(frame).toContain('第一學期（啟用中／目前學期）');
+    expect(frame).toContain('已封存學期（已封存）');
+    expect(frame).toContain('第二學期（啟用中／已鎖定）');
+  });
+
+  it('offers valid directions and persists a one-step move', async () => {
+    const managed = structuredClone(settings);
+    managed.semesters.push({value: '第三學期', status: 'active'});
+    const onSave = vi.fn(async (_next: LedgerSettings) => undefined);
+    const onSaved = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: managed, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+        onSaved={onSaved}
+      />,
+    );
+
+    await chooseIndex(stdin, 10);
+    await choose(stdin, '2');
+    expect(lastFrame()).toContain('往前移');
+    expect(lastFrame()).toContain('往後移');
+    await choose(stdin, '1');
+
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    expect(onSave.mock.calls[0]![0].semesters.map(({value}) => value)).toEqual([
+      '第二學期',
+      '第一學期',
+      '第三學期',
+    ]);
+    expect(onSaved).toHaveBeenCalledWith(
+      expect.any(Object),
+      {stayOpen: true},
+    );
+  });
+
+  it('rejects selecting a locked semester for reordering', async () => {
+    const managed = structuredClone(settings);
+    managed.locked_semesters = ['第二學期'];
+    const onSave = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: managed, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 10);
+    await choose(stdin, '2');
+    expect(lastFrame()).toContain('已鎖定學期不可調整順序，請先解鎖');
+    expect(lastFrame()).not.toContain('往前移');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('omits moves across list boundaries and locked neighbors', async () => {
+    const managed = structuredClone(settings);
+    managed.semesters.push({value: '第三學期', status: 'active'});
+    managed.locked_semesters = ['第二學期'];
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: managed, transactions}}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 10);
+    await choose(stdin, '1');
+    expect(lastFrame()).toContain('此學期目前沒有可移動的位置');
+    expect(lastFrame()).not.toContain('往前移');
+    expect(lastFrame()).not.toContain('往後移');
+  });
+
+  it('supports repeated one-step moves without leaving settings', async () => {
+    const managed = structuredClone(settings);
+    managed.semesters.push({value: '第三學期', status: 'active'});
+    const onSave = vi.fn((_next: LedgerSettings) => undefined);
+    const onSaved = vi.fn();
+    const {lastFrame, stdin} = render(
+      <StatefulSettingsScreen
+        initialSettings={managed}
+        onSave={onSave}
+        onSaved={onSaved}
+      />,
+    );
+
+    await chooseIndex(stdin, 10);
+    await choose(stdin, '2');
+    await choose(stdin, '1');
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(lastFrame()).toContain('學期順序已儲存'));
+
+    await choose(stdin, '3');
+    await choose(stdin, '1');
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+    expect(onSave.mock.calls[1]![0].semesters.map(({value}) => value)).toEqual([
+      '第二學期',
+      '第三學期',
+      '第一學期',
+    ]);
+    expect(lastFrame()).toContain('帳本設定');
+    expect(onSaved).toHaveBeenLastCalledWith(
+      expect.any(Object),
+      {stayOpen: true},
+    );
+  });
+
+  it('returns from move directions to the semester list on Escape', async () => {
+    const managed = structuredClone(settings);
+    managed.semesters.push({value: '第三學期', status: 'active'});
+    const onSave = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: managed, transactions}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 10);
+    await choose(stdin, '2');
+    expect(lastFrame()).toContain('往前移');
+    stdin.write('\u001b[27u');
+    await nextRender();
+    expect(lastFrame()).toContain('第二學期（啟用中）');
+    expect(lastFrame()).not.toContain('往前移');
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it('does not claim a save after a source conflict', async () => {

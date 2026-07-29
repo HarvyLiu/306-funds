@@ -742,7 +742,9 @@ function ReadyApp({
       <SettingsScreen
         state={state}
         onSave={saveSettings}
-        onSaved={() => setScreen({name: 'overview'})}
+        onSaved={(_settings, options) => {
+          if (options?.stayOpen !== true) setScreen({name: 'overview'});
+        }}
         onCancel={() => setScreen({name: 'overview'})}
       />
     );
