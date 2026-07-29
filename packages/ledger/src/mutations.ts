@@ -521,6 +521,46 @@ export function moveSemester(
   return validateSettingsValue(settings);
 }
 
+export function deleteSemester(
+  state: LedgerState,
+  value: string,
+  confirmation: string,
+): LedgerSettings {
+  if (confirmation !== value) {
+    settingsFailure('confirmation', 'Semester confirmation does not match');
+  }
+
+  const current = canonicalizeState(state);
+  const settings = current.settings;
+  const index = settings.semesters.findIndex(
+    (semester) => semester.value === value,
+  );
+
+  if (index === -1) {
+    settingsFailure('semesters', 'Semester is not configured');
+  }
+  if (settings.active_semester === value) {
+    settingsFailure('active_semester', 'Current semester cannot be deleted');
+  }
+  if (isSemesterLocked(settings, value)) {
+    settingsFailure('locked_semesters', 'Locked semester cannot be deleted');
+  }
+
+  const referenceIndex = current.transactions.findIndex(
+    (transaction) => transaction.semester === value,
+  );
+  if (referenceIndex !== -1) {
+    transactionFailure(
+      'semester',
+      'Referenced semester cannot be deleted',
+      referenceIndex + 2,
+    );
+  }
+
+  settings.semesters.splice(index, 1);
+  return validateSettingsValue(settings);
+}
+
 export function setActiveSemester(
   state: LedgerState,
   value: string,

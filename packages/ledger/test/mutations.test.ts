@@ -3,6 +3,7 @@ import {describe, expect, test} from 'vitest';
 import {
   addOption,
   archiveOption,
+  deleteSemester,
   isSemesterLocked,
   LedgerValidationError,
   moveSemester,
@@ -735,6 +736,119 @@ describe('settings option mutations', () => {
         source: 'settings',
         field: 'direction',
         message: 'Semester move direction is not supported',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test.each([
+    {value: '第二學期', status: 'active' as const},
+    {value: '已封存學期', status: 'archived' as const},
+  ])('permanently deletes an eligible $status semester', ({value, status}) => {
+    const state = reorderState();
+    const stateBefore = structuredClone(state);
+
+    const settings = deleteSemester(state, value, value);
+
+    expect(settings.semesters).not.toContainEqual({value, status});
+    expect(settings).not.toBe(state.settings);
+    expect(settings.semesters).not.toBe(state.settings.semesters);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test.each(['第二學期 ', ' 第二學期', '第二学期'])(
+    'requires an exact semester confirmation: %j',
+    (confirmation) => {
+      const state = reorderState();
+      const stateBefore = structuredClone(state);
+
+      const error = validationError(() =>
+        deleteSemester(state, '第二學期', confirmation),
+      );
+
+      expect(error.issues).toEqual([
+        {
+          source: 'settings',
+          field: 'confirmation',
+          message: 'Semester confirmation does not match',
+        },
+      ]);
+      expect(state).toEqual(stateBefore);
+    },
+  );
+
+  test('refuses to permanently delete the current semester', () => {
+    const state = reorderState();
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      deleteSemester(state, '第一學期', '第一學期'),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'active_semester',
+        message: 'Current semester cannot be deleted',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test('refuses to permanently delete a locked semester', () => {
+    const state = reorderState();
+    state.settings.locked_semesters = ['第二學期'];
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      deleteSemester(state, '第二學期', '第二學期'),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'locked_semesters',
+        message: 'Locked semester cannot be deleted',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test('refuses to permanently delete a transaction-referenced semester', () => {
+    const state = reorderState();
+    state.transactions = [
+      {...structuredClone(openingIncome), semester: '第二學期'},
+    ];
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      deleteSemester(state, '第二學期', '第二學期'),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'transactions',
+        row: 2,
+        field: 'semester',
+        message: 'Referenced semester cannot be deleted',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test('refuses to permanently delete an unknown semester', () => {
+    const state = reorderState();
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      deleteSemester(state, '不存在', '不存在'),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'semesters',
+        message: 'Semester is not configured',
       },
     ]);
     expect(state).toEqual(stateBefore);
