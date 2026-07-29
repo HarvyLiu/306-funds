@@ -758,6 +758,221 @@ describe('SettingsScreen', () => {
     expect(onSave).not.toHaveBeenCalled();
   });
 
+  it('shows every semester and asks for the exact selected name before deletion', async () => {
+    const managed = structuredClone(settings);
+    managed.semesters.push({value: '已封存學期', status: 'archived'});
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: managed, transactions}}
+        onSave={vi.fn()}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 11);
+    expect(lastFrame()).toContain('第一學期（啟用中／目前學期）');
+    expect(lastFrame()).toContain('已封存學期（已封存）');
+    await choose(stdin, '2');
+    expect(lastFrame()).toContain('永久刪除後無法復原');
+    expect(lastFrame()).toContain('請輸入「第二學期」確認永久刪除');
+  });
+
+  it('keeps the deletion prompt open when confirmation does not match', async () => {
+    const onSave = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions: []}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 11);
+    await choose(stdin, '2');
+    stdin.write('第二學期 ');
+    await nextRender();
+    stdin.write('\r');
+    await nextRender();
+
+    expect(lastFrame()).toContain('輸入名稱不符，未刪除學期');
+    expect(lastFrame()).toContain('請輸入「第二學期」確認永久刪除');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('permanently deletes an eligible semester and refreshes its list', async () => {
+    const onSave = vi.fn((_next: LedgerSettings) => undefined);
+    const onSaved = vi.fn();
+    const {lastFrame, stdin} = render(
+      <StatefulSettingsScreen
+        initialSettings={settings}
+        onSave={onSave}
+        onSaved={onSaved}
+      />,
+    );
+
+    await chooseIndex(stdin, 11);
+    await choose(stdin, '2');
+    stdin.write('第二學期');
+    await nextRender();
+    stdin.write('\r');
+
+    await vi.waitFor(() => expect(onSave).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(lastFrame()).toContain('學期已永久刪除'));
+    expect(onSave.mock.calls[0]![0].semesters).not.toContainEqual({
+      value: '第二學期',
+      status: 'active',
+    });
+    expect(lastFrame()).toContain('第一學期（啟用中／目前學期）');
+    expect(lastFrame()).not.toContain('第二學期（啟用中）');
+    expect(onSaved).toHaveBeenCalledWith(
+      expect.any(Object),
+      {stayOpen: true},
+    );
+  });
+
+  it.each([
+    {
+      name: 'current',
+      value: '第一學期',
+      choice: '1',
+      expected: '目前學期不可刪除',
+      state: {settings, transactions: []},
+    },
+    {
+      name: 'referenced',
+      value: '第二學期',
+      choice: '2',
+      expected: '此學期仍有交易，請先移動或刪除交易',
+      state: {settings, transactions},
+    },
+  ])(
+    'refuses a $name semester after exact confirmation',
+    async ({value, choice, expected, state}) => {
+      const onSave = vi.fn();
+      const {lastFrame, stdin} = render(
+        <SettingsScreen
+          state={state}
+          onSave={onSave}
+          onCancel={vi.fn()}
+        />,
+      );
+
+      await chooseIndex(stdin, 11);
+      await choose(stdin, choice);
+      stdin.write(value);
+      await nextRender();
+      stdin.write('\r');
+      await nextRender();
+
+      expect(lastFrame()).toContain(expected);
+      expect(onSave).not.toHaveBeenCalled();
+    },
+  );
+
+  it('refuses a locked semester after exact confirmation', async () => {
+    const managed = structuredClone(settings);
+    managed.locked_semesters = ['第二學期'];
+    const onSave = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings: managed, transactions: []}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 11);
+    await choose(stdin, '2');
+    stdin.write('第二學期');
+    await nextRender();
+    stdin.write('\r');
+    await nextRender();
+
+    expect(lastFrame()).toContain('已鎖定學期不可刪除，請先解鎖');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it('cancels a deletion prompt without saving', async () => {
+    const onSave = vi.fn();
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions: []}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 11);
+    await choose(stdin, '2');
+    stdin.write('第二');
+    await nextRender();
+    stdin.write('\u001b[27u');
+    await nextRender();
+
+    expect(lastFrame()).toContain('第二學期（啟用中）');
+    expect(lastFrame()).not.toContain('請輸入「第二學期」確認永久刪除');
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'source conflict',
+      error: new SourceConflictError('/private/settings.json'),
+      expected: '檔案已被外部修改。請重新載入後再試。',
+    },
+    {
+      name: 'generic failure',
+      error: new Error('permission denied'),
+      expected: '無法儲存設定，請確認檔案權限後再試。',
+    },
+  ])('shows a $name while permanently deleting', async ({error, expected}) => {
+    const onSave = vi.fn(async (_next: LedgerSettings) => {
+      throw error;
+    });
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions: []}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 11);
+    await choose(stdin, '2');
+    stdin.write('第二學期');
+    await nextRender();
+    stdin.write('\r');
+
+    await vi.waitFor(() => expect(lastFrame()).toContain(expected));
+    expect(lastFrame()).toContain('請輸入「第二學期」確認永久刪除');
+    expect(lastFrame()).not.toContain('學期已永久刪除');
+  });
+
+  it('prevents repeated deletion submission while saving', async () => {
+    const pendingSave = deferred();
+    const onSave = vi.fn((_next: LedgerSettings) => pendingSave.promise);
+    const {lastFrame, stdin} = render(
+      <SettingsScreen
+        state={{settings, transactions: []}}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+
+    await chooseIndex(stdin, 11);
+    await choose(stdin, '2');
+    stdin.write('第二學期');
+    await nextRender();
+    stdin.write('\r');
+    await vi.waitFor(() => expect(lastFrame()).toContain('正在儲存設定'));
+    stdin.write('\r');
+    await nextRender();
+    expect(onSave).toHaveBeenCalledOnce();
+
+    pendingSave.resolve();
+    await vi.waitFor(() => expect(lastFrame()).toContain('學期已永久刪除'));
+  });
+
   it('does not claim a save after a source conflict', async () => {
     const onSave = vi.fn(async (_next: LedgerSettings) => {
       throw new SourceConflictError('/private/settings.json');

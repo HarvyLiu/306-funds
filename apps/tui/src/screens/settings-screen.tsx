@@ -6,6 +6,7 @@ import TextInput from 'ink-text-input';
 import {
   addOption,
   archiveOption,
+  deleteSemester,
   isSemesterLocked,
   LedgerValidationError,
   moveSemester,
@@ -51,7 +52,8 @@ type Action =
   | 'archive-semester'
   | 'archive-category'
   | 'archive-officer'
-  | 'reorder-semester';
+  | 'reorder-semester'
+  | 'delete-semester';
 
 type AddAction = Extract<Action, `add-${string}`>;
 
@@ -66,6 +68,7 @@ const actions: Array<{label: string; value: Action}> = [
   {label: '封存分類', value: 'archive-category'},
   {label: '封存經手人', value: 'archive-officer'},
   {label: '調整學期順序', value: 'reorder-semester'},
+  {label: '永久刪除學期', value: 'delete-semester'},
 ];
 
 const addOptionGroups: Record<AddAction, OptionGroup> = {
@@ -137,6 +140,18 @@ function validationMessage(
   }
   if (messages.includes('Semester cannot move beyond configured order')) {
     return '此學期目前沒有可移動的位置';
+  }
+  if (messages.includes('Semester confirmation does not match')) {
+    return '輸入名稱不符，未刪除學期';
+  }
+  if (messages.includes('Current semester cannot be deleted')) {
+    return '目前學期不可刪除';
+  }
+  if (messages.includes('Locked semester cannot be deleted')) {
+    return '已鎖定學期不可刪除，請先解鎖';
+  }
+  if (messages.includes('Referenced semester cannot be deleted')) {
+    return '此學期仍有交易，請先移動或刪除交易';
   }
   if (messages.includes('Default officer cannot be archived')) {
     return '預設經手人不可封存';
@@ -241,6 +256,7 @@ export function SettingsScreen({
           next = addOption(state, addOptionGroups[action], value);
           break;
         case 'reorder-semester':
+        case 'delete-semester':
           return;
         default: {
           const group: OptionGroup =
@@ -277,6 +293,27 @@ export function SettingsScreen({
       setMessage(
         error instanceof LedgerValidationError
           ? validationMessage(error, 'reorder-semester')
+          : '設定內容無效，請檢查選擇或輸入值',
+      );
+    }
+  }
+
+  async function proposeSemesterDelete(): Promise<void> {
+    if (selectedSemester === null || pendingRef.current) return;
+    try {
+      const next = deleteSemester(state, selectedSemester, optionValue);
+      const saved = await persist(next, 'delete-semester', {
+        stayOpen: true,
+        successMessage: '學期已永久刪除',
+      });
+      if (saved) {
+        setSelectedSemester(null);
+        setOptionValue('');
+      }
+    } catch (error) {
+      setMessage(
+        error instanceof LedgerValidationError
+          ? validationMessage(error, 'delete-semester')
           : '設定內容無效，請檢查選擇或輸入值',
       );
     }
@@ -340,6 +377,40 @@ export function SettingsScreen({
           />
         );
     }
+  } else if (action === 'delete-semester') {
+    if (selectedSemester === null) {
+      content = (
+        <SelectInput
+          key={action}
+          isFocused={!pending}
+          items={state.settings.semesters.map((option) => ({
+            label: semesterManagementLabel(state.settings, option),
+            value: option.value,
+          }))}
+          onSelect={(item) => {
+            setMessage(null);
+            setOptionValue('');
+            setSelectedSemester(item.value);
+          }}
+        />
+      );
+    } else {
+      content = (
+        <Box flexDirection="column">
+          <Text color="red">永久刪除後無法復原</Text>
+          <Text>{`請輸入「${selectedSemester}」確認永久刪除`}</Text>
+          <TextInput
+            value={optionValue}
+            focus={!pending}
+            onChange={(value) => {
+              setMessage(null);
+              setOptionValue(value);
+            }}
+            onSubmit={() => void proposeSemesterDelete()}
+          />
+        </Box>
+      );
+    }
   } else {
     const options =
       action === 'semester'
@@ -378,7 +449,9 @@ export function SettingsScreen({
       {message === null ? null : (
         <Text
           color={
-            message === '設定已儲存' || message === '學期順序已儲存'
+            message === '設定已儲存' ||
+            message === '學期順序已儲存' ||
+            message === '學期已永久刪除'
               ? 'green'
               : 'red'
           }
