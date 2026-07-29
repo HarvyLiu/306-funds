@@ -12,6 +12,7 @@ import type {
   LedgerState,
   MutationPreview,
   OptionGroup,
+  SemesterMoveDirection,
   Transaction,
   TransactionInput,
 } from './types.js';
@@ -478,6 +479,45 @@ export function archiveOption(
   }
 
   option.status = 'archived';
+  return validateSettingsValue(settings);
+}
+
+export function moveSemester(
+  state: LedgerState,
+  value: string,
+  direction: SemesterMoveDirection,
+): LedgerSettings {
+  if (direction !== 'earlier' && direction !== 'later') {
+    settingsFailure('direction', 'Semester move direction is not supported');
+  }
+
+  const current = canonicalizeState(state);
+  const settings = current.settings;
+  const index = settings.semesters.findIndex(
+    (semester) => semester.value === value,
+  );
+
+  if (index === -1) {
+    settingsFailure('semesters', 'Semester is not configured');
+  }
+
+  const adjacentIndex = direction === 'earlier' ? index - 1 : index + 1;
+  const semester = settings.semesters[index];
+  const adjacentSemester = settings.semesters[adjacentIndex];
+
+  if (semester === undefined || adjacentSemester === undefined) {
+    settingsFailure('semesters', 'Semester cannot move beyond configured order');
+  }
+  if (
+    isSemesterLocked(settings, semester.value) ||
+    isSemesterLocked(settings, adjacentSemester.value)
+  ) {
+    settingsFailure('locked_semesters', 'Locked semester cannot be reordered');
+  }
+
+  settings.semesters[index] = adjacentSemester;
+  settings.semesters[adjacentIndex] = semester;
+
   return validateSettingsValue(settings);
 }
 

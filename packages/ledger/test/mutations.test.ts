@@ -5,6 +5,7 @@ import {
   archiveOption,
   isSemesterLocked,
   LedgerValidationError,
+  moveSemester,
   previewAdd,
   previewDelete,
   previewEdit,
@@ -53,6 +54,20 @@ function stateFixture(): LedgerState {
   return {
     settings: structuredClone(validSettings),
     transactions: [structuredClone(openingIncome)],
+  };
+}
+
+function reorderState(): LedgerState {
+  return {
+    settings: {
+      ...structuredClone(validSettings),
+      semesters: [
+        {value: '第一學期', status: 'active'},
+        {value: '已封存學期', status: 'archived'},
+        {value: '第二學期', status: 'active'},
+      ],
+    },
+    transactions: [],
   };
 }
 
@@ -603,6 +618,128 @@ describe('transaction mutation previews', () => {
 });
 
 describe('settings option mutations', () => {
+  test.each([
+    {
+      name: 'an active semester earlier',
+      value: '第二學期',
+      direction: 'earlier' as const,
+    },
+    {
+      name: 'an archived semester later',
+      value: '已封存學期',
+      direction: 'later' as const,
+    },
+  ])('moves $name by one position without mutating input', ({value, direction}) => {
+    const state = reorderState();
+    const stateBefore = structuredClone(state);
+
+    const settings = moveSemester(state, value, direction);
+
+    expect(settings).toEqual({
+      ...stateBefore.settings,
+      semesters: [
+        {value: '第一學期', status: 'active'},
+        {value: '第二學期', status: 'active'},
+        {value: '已封存學期', status: 'archived'},
+      ],
+    });
+    expect(settings).not.toBe(state.settings);
+    expect(settings.semesters).not.toBe(state.settings.semesters);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test.each([
+    {value: '第一學期', direction: 'earlier' as const},
+    {value: '第二學期', direction: 'later' as const},
+  ])(
+    'rejects moving $value $direction beyond the configured order',
+    ({value, direction}) => {
+      const state = reorderState();
+      const stateBefore = structuredClone(state);
+
+      const error = validationError(() =>
+        moveSemester(state, value, direction),
+      );
+
+      expect(error.issues).toEqual([
+        {
+          source: 'settings',
+          field: 'semesters',
+          message: 'Semester cannot move beyond configured order',
+        },
+      ]);
+      expect(state).toEqual(stateBefore);
+    },
+  );
+
+  test.each([
+    {
+      name: 'selected semester',
+      value: '第二學期',
+      direction: 'earlier' as const,
+    },
+    {
+      name: 'adjacent semester',
+      value: '已封存學期',
+      direction: 'later' as const,
+    },
+  ])('rejects reordering when the $name is locked', ({value, direction}) => {
+    const state = reorderState();
+    state.settings.locked_semesters = ['第二學期'];
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() => moveSemester(state, value, direction));
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'locked_semesters',
+        message: 'Locked semester cannot be reordered',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test('rejects moving a semester that is not configured', () => {
+    const state = reorderState();
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      moveSemester(state, '不存在的學期', 'earlier'),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'semesters',
+        message: 'Semester is not configured',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
+  test('rejects an unsupported runtime move direction', () => {
+    const state = reorderState();
+    const stateBefore = structuredClone(state);
+
+    const error = validationError(() =>
+      moveSemester(
+        state,
+        '第一學期',
+        'sideways' as unknown as 'earlier',
+      ),
+    );
+
+    expect(error.issues).toEqual([
+      {
+        source: 'settings',
+        field: 'direction',
+        message: 'Semester move direction is not supported',
+      },
+    ]);
+    expect(state).toEqual(stateBefore);
+  });
+
   test('queries and changes a non-current semester lock without mutating input', () => {
     const state = stateFixture();
     const stateBefore = structuredClone(state);

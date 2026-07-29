@@ -1,5 +1,7 @@
 export type OptionStatus = 'active' | 'archived';
 
+export type SemesterMoveDirection = 'earlier' | 'later';
+
 export type TransactionType = 'income' | 'expense';
 
 export interface LedgerOption {
